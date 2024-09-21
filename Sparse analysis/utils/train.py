@@ -4,6 +4,10 @@ import torch.utils.data as Data
 import torch.nn.functional as F
 
 def train(model, train_loader, valid_loader, lr=5e-3, num_epochs=100, verbose=True, clip_value=10.0, eps=1e-6):
+    # Automatically set device to 'cuda' if available, otherwise 'cpu'
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = model.to(device)  # Move the model to the appropriate device
+
     # Use Adam optimizer with custom epsilon for stability
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -25,6 +29,10 @@ def train(model, train_loader, valid_loader, lr=5e-3, num_epochs=100, verbose=Tr
         signal_power_train = 0  # Track the signal power
 
         for _, (Y, S) in enumerate(train_loader):
+            # Move data to the appropriate device (CPU or GPU)
+            Y = Y.to(device)
+            S = S.to(device)
+
             S_hat = model.forward(Y)
             
             # Calculate MSE and signal power
@@ -55,16 +63,21 @@ def train(model, train_loader, valid_loader, lr=5e-3, num_epochs=100, verbose=Tr
         test_loss = 0
         signal_power_test = 0  # Track signal power for validation
 
-        for _, (Y, S) in enumerate(valid_loader):
-            S_hat = model.forward(Y)
-            
-            # Calculate MSE and signal power
-            mse_loss = F.mse_loss(S_hat, S, reduction="sum")
-            signal_power = torch.sum(S ** 2)
-            
-            # Accumulate squared error and signal power for validation set
-            test_loss += mse_loss.item()
-            signal_power_test += signal_power.item()
+        with torch.no_grad():  # No gradient calculation needed during validation
+            for _, (Y, S) in enumerate(valid_loader):
+                # Move data to the appropriate device
+                Y = Y.to(device)
+                S = S.to(device)
+
+                S_hat = model.forward(Y)
+                
+                # Calculate MSE and signal power
+                mse_loss = F.mse_loss(S_hat, S, reduction="sum")
+                signal_power = torch.sum(S ** 2)
+                
+                # Accumulate squared error and signal power for validation set
+                test_loss += mse_loss.item()
+                signal_power_test += signal_power.item()
         
         # Compute NMSE in dB for validation set
         nmse_test = test_loss / (signal_power_test + eps)
