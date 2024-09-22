@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 class ALISTA(nn.Module):
-    def __init__(self, A, beta_ = 0.1, T=5, p = 0.012, p_max = 0.12, device='cuda'):
+    def __init__(self, A, beta_ = 0.1, T=5, p = 0.012, p_max = 0.12):
         super(ALISTA, self).__init__()
 
         # Set device (CPU or GPU)
@@ -21,8 +21,8 @@ class ALISTA(nn.Module):
         self.beta = nn.Parameter(torch.ones(self.T + 1, 1, 1).to(self.device) * beta_ / norm, requires_grad=True)
         self.mu = nn.Parameter(torch.ones(self.T + 1, 1, 1).to(self.device) / norm, requires_grad=True)
 
-        self.W1 = (self.W.T @ self.A).to(self.device)
-        self.W2 = self.W.T.to(self.device)
+        self.W1 = torch.clone((self.W.T @ self.A)).to(self.device)
+        self.W2 = torch.clone(self.W.T).to(self.device)
         
         # Support selection mechanism parameters
         self.p = p

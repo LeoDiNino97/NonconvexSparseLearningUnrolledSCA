@@ -17,6 +17,7 @@ class TiLISTA(nn.Module):
 
         # Parameters
         self.A = A.to(self.device)
+
         norm = (1.001 * torch.linalg.norm(self.A.T @ self.A, 2))
 
         self.beta = nn.Parameter(torch.ones(self.T + 1, 1, 1).to(self.device) * beta_ / norm, requires_grad=True)
@@ -24,8 +25,8 @@ class TiLISTA(nn.Module):
         
         # Linear layers
         self.W = nn.Linear(A.shape[1], A.shape[0], bias=False).to(self.device)
-        self.W.weight.data = self.A.T
-        
+        self.W.weight.data = torch.clone(self.A.T).to(self.device)
+
         # Support selection mechanism parameters
         self.p = p
         self.p_max = p_max

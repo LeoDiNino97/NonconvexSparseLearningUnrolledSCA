@@ -23,8 +23,8 @@ class L2O_ISTA(nn.Module):
         self.beta = nn.Parameter(torch.ones(self.T + 1, 1, 1).to(self.device) * beta_ / norm, requires_grad=True)
         self.mu = nn.Parameter(torch.ones(self.T + 1, 1, 1).to(self.device) / norm, requires_grad=True)
 
-        self.W1.weight.data = A.t()
-        self.W2.weight.data = A.t() @ A
+        self.W1.weight.data = torch.clone(A.t()).to(self.device)
+        self.W2.weight.data = torch.clone(A.t() @ A).to(self.device)
 
         # Losses when doing inference
         self.losses = torch.zeros(self.T, device=self.device)
