@@ -13,6 +13,7 @@ class SyntheticSignals():
         if A is None:                            
             self.A = self.A_initialization()          
         else:
+            assert (A.shape[0] == m and A.shape[1] == n)
             self.A = A
 
         # Sparsity and noise
@@ -49,8 +50,8 @@ class SyntheticSignals():
         
         # Adding noise based on the SNR if provided
         if self.SNR is not None:
-            var = torch.mean(self.y[i, :]**2) / self.SNR
-            self.y[i, :] += torch.normal(mean=0, std=torch.sqrt(var), size=(self.m,))
+            self.var = torch.mean(self.y[i, :]**2) / self.SNR
+            self.y[i, :] += torch.normal(mean=0, std=torch.sqrt(self.var), size=(self.m,))
 
     def set_data(self):
         for i in range(self.size):
