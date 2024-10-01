@@ -12,6 +12,7 @@ class ALISTA(nn.Module):
 
         # Number of layers <-> iterations
         self.T = T
+        self.linear_shared = True
 
         # Parameters
         self.A = A.to(self.device)
@@ -77,7 +78,7 @@ class ALISTA(nn.Module):
         # Return the original values for the top p% and the shrinked values for others
         return torch.where(mask, x, x_shrink)
 
-    def forward(self, y, its =None, S=None):
+    def forward(self, y, its = None, S=None):
         if its is None:
             its = self.T
             
@@ -87,9 +88,9 @@ class ALISTA(nn.Module):
 
         # Initial estimation with shrinkage
         h = self.mu[0] * torch.matmul(y, self.W2.t())
-        x = self._shrink(h, self.beta[0], 0)
+        x = self._shrink(h, self.beta[0], 1)
         
-        for t in range(1, self.T + 1):
+        for t in range(1, its + 1):
             k = self.mu[t] * (torch.matmul(x, self.W1.t()) - torch.matmul(y, self.W2.t()))
             h = x - k
             x = self._shrink(h, self.beta[t], t)
@@ -112,7 +113,7 @@ class ALISTA(nn.Module):
         # Iterate over test_loader
         for _, (Y, S) in enumerate(test_loader):
             Y, S = Y.to(self.device), S.to(self.device)
-            _ = self.forward(Y, S)  # This will accumulate NMSE values
+            _ = self.forward(y = Y, its = None, S = S)  # This will accumulate NMSE values
         
         # Convert accumulated NMSE to dB
         nmse_db = 10 * torch.log10(self.losses / self.est_powers)

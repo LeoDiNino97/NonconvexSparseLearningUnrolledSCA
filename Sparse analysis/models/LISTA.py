@@ -8,9 +8,9 @@ import torch.nn as nn
 import warnings
 warnings.filterwarnings("ignore")
 
-class LISTA_vanilla(nn.Module):
+class LISTA(nn.Module):
     def __init__(self, A, beta_ = 0.1, T = 5, p = 0.012, p_max = 0.12):
-        super(LISTA_vanilla, self).__init__()
+        super(LISTA, self).__init__()
 
         # Automatically set device to 'cuda' if available, otherwise 'cpu'
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -116,7 +116,7 @@ class LISTA_vanilla(nn.Module):
         # Iterate over test_loader
         for _, (Y, S) in enumerate(test_loader):
             Y, S = Y.to(self.device), S.to(self.device)
-            _ = self.forward(Y = Y, its = None, S = S)  # This will accumulate NMSE values
+            _ = self.forward(y = Y, its = None, S = S)  # This will accumulate NMSE values
         
         # Convert accumulated NMSE to dB
         nmse_db = 10 * torch.log10(self.losses / self.est_powers)
@@ -128,6 +128,10 @@ class LISTA_vanilla(nn.Module):
         # Return NMSE in dB for each layer
         return nmse_db
 
+
+####################################################
+############### RECURRENT DEFINITION ###############
+####################################################
 
 class LISTA_Net(nn.Module):
 

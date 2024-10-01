@@ -108,12 +108,13 @@ def layerwise_train(
         valid_loader, 
         model_class,
         lr=5e-4, 
-        ft_lr = 3e-5,
+        ft_lr=3e-5,
         num_epochs=100, 
         verbose=True, 
         clip_value=10.0, 
         eps=1e-6, 
-        fine_tune_epochs=100):
+        fine_tune_epochs=100, 
+        patience=10):
 
     assert model_class in [
         'LISTA',
@@ -182,15 +183,14 @@ def layerwise_train(
         if model_class == 'LISTA-CPSS':
             optimizer = optim.Adam(
                 list(model.Ws.parameters())[:t+1] +
-                list(model.beta)[:t+1] + 
-                list(model.mu)[:t+1],
+                list(model.beta)[:t+1],
                 lr=lr,
                 eps=eps
             )
 
         if model_class == 'TILISTA':
             optimizer = optim.Adam(
-                list(model.W.parameters())[:t+1] +
+                list(model.W.parameters()) +
                 list(model.beta)[:t+1] + 
                 list(model.mu)[:t+1],
                 lr=lr,
@@ -199,8 +199,8 @@ def layerwise_train(
 
         if model_class == 'ALISTA':
             optimizer = optim.Adam(
-                [model.beta[layer_idx] for layer_idx in range(t+1)] + 
-                [model.mu[layer_idx] for layer_idx in range(t+1)],
+                list(model.beta)[:t+1] + 
+                list(model.mu)[:t+1],
                 lr=lr,
                 eps=eps
             )
@@ -210,6 +210,11 @@ def layerwise_train(
         # Initialize loss tracking for current layer
         loss_train = np.zeros((num_epochs,))
         loss_test = np.zeros((num_epochs,))
+
+        # Early stopping variables
+        best_val_loss = float('inf')
+        epochs_since_improvement = 0
+        best_model_state = None
 
         for epoch in range(num_epochs):
             model.train()
@@ -270,9 +275,23 @@ def layerwise_train(
                     f"Validation NMSE (dB): {loss_test[epoch]:.6f}"
                 )
 
+            # Early stopping check
+            if loss_test[epoch] < best_val_loss:
+                best_val_loss = loss_test[epoch]
+                epochs_since_improvement = 0
+                best_model_state = model.state_dict()  # Save the best model state
+            else:
+                epochs_since_improvement += 1
+
+            if epochs_since_improvement >= patience:
+                if verbose:
+                    print(f"Early stopping triggered after {epoch+1} epochs")
+                model.load_state_dict(best_model_state)  # Restore best model state
+                break
+
         # Store losses for current layer
-        loss_train_all[f"Layer_{t+1}"] = loss_train
-        loss_test_all[f"Layer_{t+1}"] = loss_test
+        loss_train_all[f"Layer_{t+1}"] = loss_train[:epoch+1]
+        loss_test_all[f"Layer_{t+1}"] = loss_test[:epoch+1]
 
         if verbose:
             print(f"===== Finished Training Layer {t+1}/{T} =====\n")
@@ -299,7 +318,7 @@ def layerwise_train(
                     optimizer = optim.Adam(
                         list(model.Ws_1.parameters())[:t+1] + 
                         list(model.Ws_2.parameters())[:t+1] + 
-                        [model.beta[layer_idx] for layer_idx in range(t+1)],
+                        list(model.beta)[:t+1],
                         lr=ft_lr,
                         eps=eps
                     )
@@ -307,8 +326,8 @@ def layerwise_train(
                     optimizer = optim.Adam(
                         list(model.Ws_1.parameters()) + 
                         list(model.Ws_2.parameters()) + 
-                        [model.beta[layer_idx] for layer_idx in range(t+1)] + 
-                        [model.mu[layer_idx] for layer_idx in range(t+1)],
+                        list(model.beta)[:t+1] + 
+                        list(model.mu)[:t+1],
                         lr=ft_lr,
                         eps=eps
                     )
@@ -316,25 +335,24 @@ def layerwise_train(
             if model_class == 'LISTA-CPSS':
                 optimizer = optim.Adam(
                     list(model.Ws.parameters())[:t+1] +
-                    [model.beta[layer_idx] for layer_idx in range(t+1)] + 
-                    [model.mu[layer_idx] for layer_idx in range(t+1)],
+                    list(model.beta)[:t+1],
                     lr=ft_lr,
                     eps=eps
                 )
 
             if model_class == 'TILISTA':
                 optimizer = optim.Adam(
-                    list(model.W.parameters())[:t+1] +
-                    [model.beta[layer_idx] for layer_idx in range(t+1)] + 
-                    [model.mu[layer_idx] for layer_idx in range(t+1)],
+                    list(model.W.parameters()) +
+                    list(model.beta)[:t+1] + 
+                    list(model.mu)[:t+1],
                     lr=ft_lr,
                     eps=eps
                 )
 
             if model_class == 'ALISTA':
                 optimizer = optim.Adam(
-                    [model.beta[layer_idx] for layer_idx in range(t+1)] + 
-                    [model.mu[layer_idx] for layer_idx in range(t+1)],
+                    list(model.beta)[:t+1] + 
+                    list(model.mu)[:t+1],
                     lr=ft_lr,
                     eps=eps
                 )
@@ -344,6 +362,10 @@ def layerwise_train(
             # Initialize loss tracking for fine-tuning
             loss_train_ft = np.zeros((fine_tune_epochs,))
             loss_test_ft = np.zeros((fine_tune_epochs,))
+
+            best_val_loss_ft = float('inf')
+            epochs_since_improvement_ft = 0
+            best_model_state_ft = None
 
             for epoch in range(fine_tune_epochs):
                 model.train()
@@ -404,11 +426,26 @@ def layerwise_train(
                         f"Validation NMSE (dB): {loss_test_ft[epoch]:.6f}"
                     )
 
+                # Early stopping for fine-tuning
+                if loss_test_ft[epoch] < best_val_loss_ft:
+                    best_val_loss_ft = loss_test_ft[epoch]
+                    epochs_since_improvement_ft = 0
+                    best_model_state_ft = model.state_dict()  # Save the best model state
+                else:
+                    epochs_since_improvement_ft += 1
+
+                if epochs_since_improvement_ft >= patience:
+                    if verbose:
+                        print(f"Early stopping for fine-tuning triggered after {epoch+1} epochs")
+                    model.load_state_dict(best_model_state_ft)  # Restore best model state
+                    break
+
             # Store fine-tuning losses
-            loss_train_all["Fine_Tune"] = loss_train_ft
-            loss_test_all["Fine_Tune"] = loss_test_ft
+            loss_train_all["Fine_Tune"] = loss_train_ft[:epoch+1]
+            loss_test_all["Fine_Tune"] = loss_test_ft[:epoch+1]
 
             if verbose:
                 print("===== Finished Fine-Tuning =====\n")
 
     return loss_train_all, loss_test_all
+

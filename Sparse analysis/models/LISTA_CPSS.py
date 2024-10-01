@@ -14,6 +14,7 @@ class LISTA_CPSS(nn.Module):
 
         # Number of layers <-> iterations
         self.T = T
+        self.linear_shared = False
 
         # Parameters
         self.A = A.to(self.device)
@@ -79,7 +80,7 @@ class LISTA_CPSS(nn.Module):
 
         # Initial estimation with shrinkage
         h = self.Ws[0](y)
-        x = self._shrink(h, self.beta[0], 0)
+        x = self._shrink(h, self.beta[0], 1)
         
         for t in range(1, its + 1):
             k = self.Ws[t](torch.matmul(x, self.A.t()) - y)
@@ -107,7 +108,7 @@ class LISTA_CPSS(nn.Module):
         # Iterate over test_loader
         for _, (Y, S) in enumerate(test_loader):
             Y, S = Y.to(self.device), S.to(self.device)
-            _ = self.forward(Y, its = None, S)  # This will accumulate NMSE values
+            _ = self.forward(y = Y, its = None, S = S)  # This will accumulate NMSE values
         
         # Convert accumulated NMSE to dB
         nmse_db = 10 * torch.log10(self.losses / self.est_powers)

@@ -53,7 +53,8 @@ class SyntheticSignals():
             self.var = torch.mean(self.y[i, :]**2) / self.SNR
             self.y[i, :] += torch.normal(mean=0, std=torch.sqrt(self.var), size=(self.m,))
 
-    def set_data(self):
+    def set_data(self, seed = 42):
+        torch.manual_seed(seed)
         for i in range(self.size):
             self.set_tuple(i)
     
