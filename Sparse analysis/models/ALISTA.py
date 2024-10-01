@@ -18,8 +18,15 @@ class ALISTA(nn.Module):
         self.W = self.W_optimization().to(self.device)
 
         norm = (1.001 * torch.linalg.norm(self.A.T @ self.A, 2))
-        self.beta = nn.Parameter(torch.ones(self.T + 1, 1, 1).to(self.device) * beta_ / norm, requires_grad=True)
-        self.mu = nn.Parameter(torch.ones(self.T + 1, 1, 1).to(self.device) / norm, requires_grad=True)
+        self.beta = nn.ParameterList([
+            nn.Parameter(torch.tensor(beta_ / norm).reshape(1, 1).to(self.device), requires_grad=True)
+            for _ in range(self.T + 1)
+        ])
+
+        self.mu = nn.ParameterList([
+            nn.Parameter(torch.tensor(1 / norm).reshape(1, 1).to(self.device), requires_grad=True)
+            for _ in range(self.T + 1)
+        ])
 
         self.W1 = torch.clone((self.W.T @ self.A)).to(self.device)
         self.W2 = torch.clone(self.W.T).to(self.device)
@@ -70,19 +77,22 @@ class ALISTA(nn.Module):
         # Return the original values for the top p% and the shrinked values for others
         return torch.where(mask, x, x_shrink)
 
-    def forward(self, y, S=None):
+    def forward(self, y, its =None, S=None):
+        if its is None:
+            its = self.T
+            
         y = y.to(self.device)
         if S is not None:
             S = S.to(self.device)
 
         # Initial estimation with shrinkage
-        h = self.mu[0, :, :] * torch.matmul(y, self.W2.t())
-        x = self._shrink(h, self.beta[0, :, :], 0)
+        h = self.mu[0] * torch.matmul(y, self.W2.t())
+        x = self._shrink(h, self.beta[0], 0)
         
         for t in range(1, self.T + 1):
-            k = self.mu[t, :, :] * (torch.matmul(x, self.W1.t()) - torch.matmul(y, self.W2.t()))
+            k = self.mu[t] * (torch.matmul(x, self.W1.t()) - torch.matmul(y, self.W2.t()))
             h = x - k
-            x = self._shrink(h, self.beta[t, :, :], t)
+            x = self._shrink(h, self.beta[t], t)
 
             # If ground truth is provided, calculate the loss for monitoring
             if S is not None:

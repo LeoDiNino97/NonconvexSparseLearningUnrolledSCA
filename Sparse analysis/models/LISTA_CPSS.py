@@ -20,8 +20,11 @@ class LISTA_CPSS(nn.Module):
 
         norm = (1.001 * torch.linalg.norm(self.A.T @ self.A, 2))
 
-        self.beta = nn.Parameter(torch.ones(self.T + 1, 1, 1).to(self.device) * beta_ / norm, requires_grad=True)
-        
+        self.beta = nn.ParameterList([
+            nn.Parameter(torch.tensor(beta_ / norm).reshape(1, 1).to(self.device), requires_grad=True)
+            for _ in range(self.T + 1)
+        ])
+
         # Linear layers
         self.Ws = nn.ModuleList()
         for _ in range(self.T + 1):
@@ -63,7 +66,12 @@ class LISTA_CPSS(nn.Module):
         # Return the original values for the top p% and the shrinked values for others
         return torch.where(mask, x, x_shrink)
 
-    def forward(self, y, S=None):
+    def forward(self, y, its = None, S=None):     
+        # Move inputs to the correct device
+
+        if its is None:
+            its = self.T
+
         # Move inputs to the correct device
         y = y.to(self.device)
         if S is not None:
@@ -71,12 +79,12 @@ class LISTA_CPSS(nn.Module):
 
         # Initial estimation with shrinkage
         h = self.Ws[0](y)
-        x = self._shrink(h, self.beta[0, :, :], 0)
+        x = self._shrink(h, self.beta[0], 0)
         
-        for t in range(1, self.T + 1):
+        for t in range(1, its + 1):
             k = self.Ws[t](torch.matmul(x, self.A.t()) - y)
             h = x - k
-            x = self._shrink(h, self.beta[t, :, :], t)
+            x = self._shrink(h, self.beta[t], t)
 
             # If ground truth is provided, calculate the loss for monitoring
             if S is not None:
@@ -99,7 +107,7 @@ class LISTA_CPSS(nn.Module):
         # Iterate over test_loader
         for _, (Y, S) in enumerate(test_loader):
             Y, S = Y.to(self.device), S.to(self.device)
-            _ = self.forward(Y, S)  # This will accumulate NMSE values
+            _ = self.forward(Y, its = None, S)  # This will accumulate NMSE values
         
         # Convert accumulated NMSE to dB
         nmse_db = 10 * torch.log10(self.losses / self.est_powers)
