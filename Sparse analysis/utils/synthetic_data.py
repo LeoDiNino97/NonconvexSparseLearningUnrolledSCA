@@ -3,7 +3,7 @@ import torch
 import torch.utils.data as Data
 
 class SyntheticSignals():
-    def __init__(self, A, n, m, p=0.1, SNR=None, size=1000, batch_size=512):
+    def __init__(self, A, n, m, p=0.1, SNR=None, size=1000, batch_size=512, discretized=False):
         
         # Model complexity
         self.n = n  # Number of samples in the original signal
@@ -19,6 +19,7 @@ class SyntheticSignals():
         # Sparsity and noise
         self.p = p  # Sparsity of the signal in terms of percentage of components being non-zero
         self.SNR = SNR  # Signal-to-noise ratio 
+        self.discretized = discretized
 
         # Size and batch size
         self.batch_size = batch_size
@@ -42,7 +43,10 @@ class SyntheticSignals():
 
         # Generating random sparsity in the canonical basis of the original signal
         idxs = np.random.choice(self.n, int(self.p * self.n), replace=False)
-        peaks = np.random.normal(loc = 0, scale=1, size=int(self.p * self.n))
+        if self.discretized:
+          peaks = np.random.choice([-1, 1], size=int(self.p * self.n))
+        else:
+          peaks = np.random.normal(loc = 0, scale=1, size=int(self.p * self.n))
 
         # Generating the original signal and its corrupted observations
         self.x[i, idxs] = torch.from_numpy(peaks).to(self.x)

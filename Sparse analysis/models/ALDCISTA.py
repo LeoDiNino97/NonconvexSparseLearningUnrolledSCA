@@ -1,44 +1,99 @@
+import numpy as np
 import cvxpy as cp
+
+from tqdm import tqdm
+from matplotlib import pyplot as plt
+from matplotlib.ticker import MaxNLocator
+
+import pickle
+
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+import torch.utils.data as Data
+import matplotlib.pyplot as plt
 
-class ALISTA(nn.Module):
-    def __init__(self, A, beta_ = 0.1, T=5, p = 0.012, p_max = 0.12):
-        super(ALISTA, self).__init__()
+import warnings
+warnings.filterwarnings("ignore")
 
-        # Set device (CPU or GPU)
+class ALDC_ISTA(nn.Module):
+    def __init__(self, A, mode, lambd=0.1, p =0.012, p_max = 0.12, T = 5, W = None):
+        super().__init__()
+    
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # Number of layers <-> iterations
+        assert mode in ['EXP', 'PNEG', 'SCAD']
+
+        self.mode = mode
+
+        self.A = A.to(self.device)  # Move A to the correct device
+        self.A.requires_grad = False
+
         self.T = T
-        self.linear_shared = True
 
-        # Parameters
-        self.A = A.to(self.device)
-        self.W = self.W_optimization().to(self.device)
+        self.L = torch.max(torch.real(torch.linalg.eigvals(A.t() @ A))).to(self.device)
 
-        norm = (1.001 * torch.linalg.norm(self.A.T @ self.A, 2))
-        self.beta = nn.ParameterList([
-            nn.Parameter(torch.tensor(beta_ / norm).reshape(1, 1).to(self.device), requires_grad=True)
+        # Initialization of the learnable parameters
+
+        self.lambd = nn.ParameterList([
+            nn.Parameter(torch.tensor(1).reshape(1, 1).to(self.device) * lambd / self.L, requires_grad=True)
             for _ in range(self.T + 1)
         ])
 
         self.mu = nn.ParameterList([
-            nn.Parameter(torch.tensor(1 / norm).reshape(1, 1).to(self.device), requires_grad=True)
+            nn.Parameter(torch.tensor(1).reshape(1, 1).to(self.device) / self.L, requires_grad=True)
             for _ in range(self.T + 1)
         ])
 
+        self.theta = nn.ParameterList([
+            nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device) * 5, requires_grad=True)
+            for _ in range(self.T + 1)
+            ])
+        
+        # Linear layer
+        if W is None:
+            self.W = self.W_optimization().to(self.device)
+        else:
+            self.W = W.to(self.device)
+            
         self.W1 = torch.clone((self.W.T @ self.A)).to(self.device)
         self.W2 = torch.clone(self.W.T).to(self.device)
-        
+
         # Support selection mechanism parameters
         self.p = p
         self.p_max = p_max
 
-        # Losses when doing inference
+        # Losses when doing inference (placeholder for NMSE accumulation)
         self.losses = torch.zeros(self.T, device=self.device)
         self.est_powers = torch.zeros(self.T, device=self.device)
+
+        # Mode setting for the layer
+        if mode == 'EXP':
+
+            self.ddx = self.ddxEXP
+            self.eta = self.etaEXP
+
+        if mode == 'PNEG':
+
+            self.P = nn.ParameterList([
+            nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device) * (-0.1), requires_grad=True)
+            for _ in range(self.T + 1)
+            ])
+            self.ddx = self.ddxNEG
+            self.eta = self.etaNEG
+
+        if mode == 'SCAD':
+       
+            self.a = nn.ParameterList([
+            nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device)*10, requires_grad=True)
+            for _ in range(self.T + 1)
+            ])        
+            self.ddx = self.ddxSCAD
+            self.eta = self.etaSCAD
+    
+    #_________________________________________________________________
+    #______________ METHODS FOR ENABLING DIFFERENT LAYERS_____________
+    #_________________________________________________________________
 
     def W_optimization(self):
         N, M = self.A.shape
@@ -51,7 +106,44 @@ class ALISTA(nn.Module):
         prob.solve(solver=cp.MOSEK)
         print('Linear layer initialized minimizing coherence!')
         return torch.from_numpy(W.value).float()
+    
+    # Derivatives of the nonconvex components
+    def ddxEXP(self, x, t):
+        return torch.sign(x) * self.theta[t] * (1 - torch.exp(-self.theta[t] * torch.abs(x)))
 
+    def ddxNEG(self, x, t):
+        return -torch.sign(x) * self.P[t] * self.theta[t] * (1 - (1 + self.theta[t] * torch.abs(x)) ** (self.P[t] - 1))
+
+    def ddxSCAD(self, x, t):
+        abs_x = torch.abs(x)
+
+        mask1 = (abs_x <= 1)
+        mask2 = (1 / self.theta[t] < abs_x) & (abs_x <= self.a[t] / self.theta[t])
+        mask3 = (abs_x > self.a[t] / self.theta[t])
+
+        # Compute the value for each condition
+        val1 = torch.zeros_like(x)
+        val2 = torch.sign(x) * (2 * self.theta[t] * (self.theta[t] * abs_x - 1)) / (self.a[t] ** 2 - 1)
+        val3 = torch.sign(x) * (2 * self.theta[t] / (self.a[t] + 1))
+
+        # Apply the masks to compute the final result
+        result = torch.where(mask1, val1, torch.where(mask2, val2, val3))
+
+        return result
+
+    # Parametrization for the surrogates
+    def etaEXP(self, t):
+        return self.theta[t]
+
+    def etaNEG(self, t):
+        return -self.P[t] * self.theta[t]
+
+    def etaSCAD(self, t):
+        return 2 * self.theta[t] / (self.a[t] + 1)
+    
+    #___________________________________________________________________
+    #___________________________________________________________________
+        
     def _shrink(self, x, beta, t):
         # Get the absolute values of the elements in x
         abs_x = torch.abs(x)
@@ -78,7 +170,9 @@ class ALISTA(nn.Module):
         # Return the original values for the top p% and the shrinked values for others
         return torch.where(mask, x, x_shrink)
 
-    def forward(self, y, its = None, S=None):
+    
+    def forward(self, y, its=None, S=None):     
+        # Move inputs to the correct device
         if its is None:
             its = self.T
             
@@ -86,17 +180,17 @@ class ALISTA(nn.Module):
         if S is not None:
             S = S.to(self.device)
 
-        # Initial estimation with shrinkage
-        h = self.mu[0] * torch.matmul(y, self.W2.t())
-        x = self._shrink(h, self.beta[0], 1)
+        # Initial sparse estimate using the first layer
+        x = torch.zeros((y.shape[0], self.A.shape[1])).to(self.device)
+        x = self._shrink(self.mu[0] * torch.matmul(y, self.W2.t()) + self.lambd[0] * self.ddx(x, 0) , self.eta(0) * self.lambd[0], 1)
         
+        # Loop over layers to refine the estimate
         for t in range(1, its + 1):
-            k = self.mu[t] * (torch.matmul(x, self.W1.t()) - torch.matmul(y, self.W2.t()))
-            h = x - k
-            x = self._shrink(h, self.beta[t], t)
-
-            # If ground truth is provided, calculate the loss for monitoring
-            if S is not None:
+            x = self._shrink(x - self.mu[t] * (torch.matmul(x, self.W1.t()) - torch.matmul(y, self.W2.t())) + self.lambd[t] * self.ddx(x, t), 
+                             self.eta(t) * self.lambd[t],
+                             t)
+            
+            if S is not None:  # During inference, compute the NMSE at each layer
                 with torch.no_grad():
                     mse_loss = F.mse_loss(x.detach(), S.detach(), reduction="sum")
                     signal_power = torch.sum(S.detach() ** 2)
@@ -105,7 +199,8 @@ class ALISTA(nn.Module):
                     self.est_powers[t - 1] += signal_power.item() + 1e-6
 
         return x
-    
+
+    # Method to compute NMSE during inference mode
     def compute_nmse_inference(self, test_loader):
         # Reset the losses accumulator
         self.losses = torch.zeros(self.T, device=self.device)
@@ -124,7 +219,7 @@ class ALISTA(nn.Module):
 
         # Return NMSE in dB for each layer
         return nmse_db
-        
+
     def compute_support(self, test_loader):
         # Reset the losses accumulator
         self.losses = torch.zeros(self.T, device=self.device)
@@ -159,3 +254,6 @@ class ALISTA(nn.Module):
         # Compute the average precision over all batches
         average_precision = total_precision / total_samples
         return average_precision
+
+
+
