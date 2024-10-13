@@ -1,0 +1,11 @@
+# Ignore everything in the real_data folder
+Sparse analysis/real_data/*
+
+# Uncomment or add exceptions below if needed
+
+# Allow specific files or directories inside real_data (uncomment the lines below to use)
+# !real_data/important_file.txt    # Tracks a specific file
+# !real_data/images/               # Tracks the 'images' subdirectory and its contents
+
+# If you want to ignore all files except for certain types, e.g., allow .csv files:
+# !real_data/*.csv

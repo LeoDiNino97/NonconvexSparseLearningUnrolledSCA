@@ -220,40 +220,42 @@ class ALDC_ISTA(nn.Module):
         # Return NMSE in dB for each layer
         return nmse_db
 
-    def compute_support(self, test_loader):
-        # Reset the losses accumulator
-        self.losses = torch.zeros(self.T, device=self.device)
-        
-        total_precision = 0.0
-        total_samples = 0
-        
-        # Iterate over test_loader
-        for _, (Y, S) in enumerate(test_loader):
-            Y, S = Y.to(self.device), S.to(self.device)
-            X = self.forward(y = Y, its = None)
+def compute_support(self, test_loader, supp):
+    # Reset the losses accumulator
+    self.losses = torch.zeros(self.T, device=self.device)
+    
+    total_precision = 0.0
+    total_samples = 0
+    
+    # Iterate over test_loader
+    for _, (Y, S) in enumerate(test_loader):
+        Y, S = Y.to(self.device), S.to(self.device)
+        X = self.forward(y = Y, its = None, S = S)
 
-            # Hard threshold X by retaining the top `supp` largest components in absolute value
-            X_thresholded = (X != 0).float()  # Create a binary support mask for X
+        # Hard threshold X by retaining the top `supp` largest components in absolute value
+        topk_vals, topk_indices = torch.topk(X.abs(), supp, dim=1)
+        X_thresholded = torch.zeros_like(X)
+        X_thresholded.scatter_(1, topk_indices, topk_vals)
+        X_thresholded = (X_thresholded > 0).float()  # Create a binary support mask for X
 
-            # Create a binary support mask for S (ground truth support)
-            S_support = (S != 0).float()
+        # Create a binary support mask for S (ground truth support)
+        S_support = (S != 0).float()
 
-            # True positives (correctly identified non-zeros)
-            true_positives = (X_thresholded * S_support).sum(dim=1)
+        # True positives (correctly identified non-zeros)
+        true_positives = (X_thresholded * S_support).sum(dim=1)
 
-            # Predicted positives (all non-zeros in X_thresholded)
-            predicted_positives = X_thresholded.sum(dim=1)
+        # Predicted positives (all non-zeros in X_thresholded)
+        predicted_positives = X_thresholded.sum(dim=1)
 
-            # Precision = True positives / Predicted positives (avoiding division by zero)
-            precision = true_positives / (predicted_positives + 1e-10)
+        # Precision = True positives / Predicted positives (avoiding division by zero)
+        precision = true_positives / (predicted_positives + 1e-10)
 
-            # Sum precision for this batch
-            total_precision += precision.sum().item()
-            total_samples += Y.size(0)
-        
-        # Compute the average precision over all batches
-        average_precision = total_precision / total_samples
-        return average_precision
-
+        # Sum precision for this batch
+        total_precision += precision.sum().item()
+        total_samples += Y.size(0)
+    
+    # Compute the average precision over all batches
+    average_precision = total_precision / total_samples
+    return average_precision
 
 

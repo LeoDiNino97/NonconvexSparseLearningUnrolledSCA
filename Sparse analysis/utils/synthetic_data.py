@@ -42,11 +42,11 @@ class SyntheticSignals():
         self.x[i, :] = 0
 
         # Generating random sparsity in the canonical basis of the original signal
-        idxs = np.random.choice(self.n, int(self.p * self.n), replace=False)
+        idxs = np.where(np.random.rand(self.n) < self.p)[0]  
         if self.discretized:
-          peaks = np.random.choice([-1, 1], size=int(self.p * self.n))
+          peaks = np.random.choice([-1, 1], size=idxs.shape[0])
         else:
-          peaks = np.random.normal(loc = 0, scale=1, size=int(self.p * self.n))
+          peaks = np.random.normal(loc = 0, scale=1, size=idxs.shape[0])
 
         # Generating the original signal and its corrupted observations
         self.x[i, idxs] = torch.from_numpy(peaks).to(self.x)
