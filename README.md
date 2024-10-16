@@ -17,7 +17,7 @@ nonconvex sparse learning*** (a.y. 2023/24)
   <img src="https://github.com/user-attachments/assets/ff7c14b4-39e8-4716-ad31-9518acc1b26f" alt="Robustness to Measurement Matrix Conditioning" width="400"/>
 
 + Increased reconstruction performances;<br>
-  <img src="https://github.com/user-attachments/assets/e41ff15f-7368-434b-958e-d3ad36046a15" alt="Reconstruction Performances" width="400"/>
+  <img src="https://github.com/user-attachments/assets/e41ff15f-7368-434b-958e-d3ad36046a15" alt="Reconstruction Performances" width="800"/>
 
 The model has been tested on real data in a natural image denoising task over BSD500, outperforming ALISTA in terms of PSNR. 
 
