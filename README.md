@@ -6,6 +6,8 @@ nonconvex sparse learning*** (a.y. 2023/24)
 + Defined the sparse least squares problem with Difference-of-convex Sparsity Inducing Penalties:
   
 $$\underset{\mathbf{x}}{\mathrm{min}} \  \frac{1}{2} \lVert \mathbf{y} - \mathbf{A}\mathbf{x}\rVert_2^2 + \lambda G(\mathbf{x})$$  
+$$ G(\mathbf{x}) = \sum_{i=1}^m g(x_i) $$
+$$ g(x_i) = g^+(x_i) - g^-(x_i) = \eta(\theta)|x_i| - [\eta(\theta)|x_i| - g(x_i)] $$
 
 + Solved it with Successive Convex Approximation, retrieving a fundamental functional form;
 + Reproduction of the state-of-the art for what concerns deep sparse coders;
