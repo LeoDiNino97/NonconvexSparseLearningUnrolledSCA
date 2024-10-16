@@ -251,9 +251,10 @@ def layerwise_train_DC(
                 if model_class == 'LISTA':
                     model.Ws_1[layer_idx].weight.requires_grad = False
                     model.Ws_2[layer_idx].weight.requires_grad = False
-                if model_class == 'LISTA-CPSS':
-                    model.Ws[layer_idx].weight.requires_grad = False            
-
+                    if DCSIP == 'SCAD':
+                        model.a[layer_idx].requires_grad = False
+                    if DCSIP == 'PNEG':
+                        model.P[layer_idx].requires_grad = False
 
         # Define optimizer to include W1, W2, and parameters up to layer t
         if model_class == 'LISTA':
@@ -274,23 +275,6 @@ def layerwise_train_DC(
                     lr=lr,
                     eps=eps
                 )
-
-        if model_class == 'LISTA-CPSS':
-            optimizer = optim.Adam(
-                list(model.Ws.parameters())[:t+1] +
-                list(model.beta)[:t+1],
-                lr=lr,
-                eps=eps
-            )
-
-        if model_class == 'TILISTA':
-            optimizer = optim.Adam(
-                list(model.W.parameters()) +
-                list(model.beta)[:t+1] + 
-                list(model.mu)[:t+1],
-                lr=lr,
-                eps=eps
-            )
 
         if model_class == 'AL-DC-ISTA':
             params = list(model.lambd)[:t+1] + list(model.theta)[:t+1] + list(model.mu)[:t+1]
@@ -414,8 +398,10 @@ def layerwise_train_DC(
                     if model_class == 'LISTA':
                         model.Ws_1[layer_idx].weight.requires_grad = True
                         model.Ws_2[layer_idx].weight.requires_grad = True
-                    if model_class == 'LISTA-CPSS':
-                        model.Ws[layer_idx].weight.requires_grad = True   
+                        if DCSIP == 'SCAD':
+                            model.a[layer_idx].requires_grad = True
+                        if DCSIP == 'PNEG':
+                            model.P[layer_idx].requires_grad = True
 
             if model_class == 'LISTA':
                 if not linear_shared:
@@ -435,23 +421,6 @@ def layerwise_train_DC(
                         lr=ft_lr,
                         eps=eps
                     )
-
-            if model_class == 'LISTA-CPSS':
-                optimizer = optim.Adam(
-                    list(model.Ws.parameters())[:t+1] +
-                    list(model.beta)[:t+1],
-                    lr=ft_lr,
-                    eps=eps
-                )
-
-            if model_class == 'TILISTA':
-                optimizer = optim.Adam(
-                    list(model.W.parameters()) +
-                    list(model.beta)[:t+1] + 
-                    list(model.mu)[:t+1],
-                    lr=ft_lr,
-                    eps=eps
-                )
 
             if model_class == 'AL-DC-ISTA':
                 params = list(model.lambd)[:t+1] + list(model.theta)[:t+1] + list(model.mu)[:t+1]
@@ -1029,14 +998,12 @@ def layerwise_train_DC_U(
             train_loss = 0.0
             signal_power_train = 0.0
 
-            for Y in train_loader:
+            for (Y, Y_noisy) in train_loader:
                 Y = Y.to(device)
-
-            for Y in train_loader:
-                Y = Y.to(device)
+                Y_noisy = Y_noisy.to(device)
 
                 optimizer.zero_grad()
-                S_hat = model(y=Y, its=t, S = None)
+                S_hat = model(y=Y_noisy, its=t, S = None)
 
                 mse_loss = F.mse_loss(Y.T, torch.matmul(model.A, S_hat.T), reduction="sum")
                 signal_power = torch.sum(Y ** 2)
@@ -1063,22 +1030,18 @@ def layerwise_train_DC_U(
             signal_power_test = 0.0
 
             with torch.no_grad():
-                for Y in valid_loader:
+                for (Y, Y_noisy) in valid_loader:
                     Y = Y.to(device)
+                    Y_noisy = Y_noisy.to(device)
 
                     optimizer.zero_grad()
-                    S_hat = model(y=Y, its=t, S = None)
+                    S_hat = model(y=Y_noisy, its=t, S = None)
 
                     mse_loss = F.mse_loss(Y.T, torch.matmul(model.A, S_hat.T), reduction="sum")
                     signal_power = torch.sum(Y ** 2)
-
-                    l1_penalty = torch.norm(S_hat, p=1)
-    
-                    # Define a regularization parameter (lambda)
-                    lambda_l1 = 0.4  # Adjust this value depending on how much regularization you want
                     
                     # Total loss with L1 penalty
-                    total_loss = mse_loss + lambda_l1 * l1_penalty
+                    total_loss = mse_loss 
 
                     test_loss_epoch += total_loss.item()
                     signal_power_test += signal_power.item()
@@ -1199,22 +1162,17 @@ def layerwise_train_DC_U(
                 train_loss = 0.0
                 signal_power_train = 0.0
 
-                for Y in train_loader:
+                for (Y, Y_noisy) in train_loader:
                     Y = Y.to(device)
+                    Y_noisy = Y_noisy.to(device)
 
                     optimizer.zero_grad()
-                    S_hat = model(y=Y, its=t, S = None)
+                    S_hat = model(y=Y_noisy, its=t, S = None)
 
                     mse_loss = F.mse_loss(Y.T, torch.matmul(model.A, S_hat.T), reduction="sum")
                     signal_power = torch.sum(Y ** 2)
 
-                    l1_penalty = torch.norm(S_hat, p=1)
-    
-                    # Define a regularization parameter (lambda)
-                    lambda_l1 = 0.4  # Adjust this value depending on how much regularization you want
-                    
-                    # Total loss with L1 penalty
-                    total_loss = mse_loss + lambda_l1 * l1_penalty
+                    total_loss = mse_loss
                     loss = total_loss
                     loss.backward()
 
@@ -1237,22 +1195,18 @@ def layerwise_train_DC_U(
                 signal_power_test = 0.0
 
                 with torch.no_grad():
-                    for Y in valid_loader:
+                    for (Y, Y_noisy) in train_loader:
                         Y = Y.to(device)
+                        Y_noisy = Y_noisy.to(device)
 
                         optimizer.zero_grad()
-                        S_hat = model(y=Y, its=t, S = None)
+                        S_hat = model(y=Y_noisy, its=t, S = None)
 
                         mse_loss = F.mse_loss(Y.T, torch.matmul(model.A, S_hat.T), reduction="sum")
                         signal_power = torch.sum(Y ** 2)
 
-                        l1_penalty = torch.norm(S_hat, p=1)
-        
-                        # Define a regularization parameter (lambda)
-                        lambda_l1 = 0.4  # Adjust this value depending on how much regularization you want
-                        
                         # Total loss with L1 penalty
-                        total_loss = mse_loss + lambda_l1 * l1_penalty
+                        total_loss = mse_loss 
 
                         test_loss_epoch += total_loss.item()
                         signal_power_test += signal_power.item()
@@ -1402,11 +1356,12 @@ def layerwise_train_U(
             train_loss = 0.0
             signal_power_train = 0.0
 
-            for Y in train_loader:
+            for (Y, Y_noisy) in train_loader:
                 Y = Y.to(device)
+                Y_noisy = Y_noisy.to(device)
 
                 optimizer.zero_grad()
-                S_hat = model(y=Y, its=t, S = None)
+                S_hat = model(y=Y_noisy, its=t, S = None)
 
                 mse_loss = F.mse_loss(Y.T, torch.matmul(model.A, S_hat.T), reduction="sum")
                 signal_power = torch.sum(Y ** 2)
@@ -1433,22 +1388,18 @@ def layerwise_train_U(
             signal_power_test = 0.0
 
             with torch.no_grad():
-                for Y in valid_loader:
+                for (Y, Y_noisy) in valid_loader:
                     Y = Y.to(device)
+                    Y_noisy = Y_noisy.to(device)
 
                     optimizer.zero_grad()
-                    S_hat = model(y=Y, its=t, S = None)
+                    S_hat = model(y=Y_noisy, its=t, S = None)
 
                     mse_loss = F.mse_loss(Y.T, torch.matmul(model.A, S_hat.T), reduction="sum")
                     signal_power = torch.sum(Y ** 2)
-
-                    l1_penalty = torch.norm(S_hat, p=1)
     
-                    # Define a regularization parameter (lambda)
-                    lambda_l1 = 0.4  # Adjust this value depending on how much regularization you want
-                    
                     # Total loss with L1 penalty
-                    total_loss = mse_loss + lambda_l1 * l1_penalty
+                    total_loss = mse_loss
 
                     test_loss_epoch += total_loss.item()
                     signal_power_test += signal_power.item()
@@ -1560,22 +1511,17 @@ def layerwise_train_U(
                 train_loss = 0.0
                 signal_power_train = 0.0
 
-                for Y in train_loader:
+                for (Y, Y_noisy) in train_loader:
                     Y = Y.to(device)
-
+                    Y_noisy = Y_noisy.to(device)
+                    
                     optimizer.zero_grad()
-                    S_hat = model(y=Y, its=t, S = None)
+                    S_hat = model(y=Y_noisy, its=t, S = None)
 
                     mse_loss = F.mse_loss(Y.T, torch.matmul(model.A, S_hat.T), reduction="sum")
                     signal_power = torch.sum(Y ** 2)
 
-                    l1_penalty = torch.norm(S_hat, p=1)
-    
-                    # Define a regularization parameter (lambda)
-                    lambda_l1 = 0.4  # Adjust this value depending on how much regularization you want
-                    
-                    # Total loss with L1 penalty
-                    total_loss = mse_loss + lambda_l1 * l1_penalty
+                    total_loss = mse_loss
                     loss = total_loss
                     loss.backward()
 
@@ -1598,22 +1544,16 @@ def layerwise_train_U(
                 signal_power_test = 0.0
 
                 with torch.no_grad():
-                    for Y in valid_loader:
+                    for (Y, Y_noisy) in valid_loader:
                         Y = Y.to(device)
 
                         optimizer.zero_grad()
-                        S_hat = model(y=Y, its=t, S = None)
+                        S_hat = model(y=Y_noisy, its=t, S = None)
 
                         mse_loss = F.mse_loss(Y.T, torch.matmul(model.A, S_hat.T), reduction="sum")
                         signal_power = torch.sum(Y ** 2)
 
-                        l1_penalty = torch.norm(S_hat, p=1)
-        
-                        # Define a regularization parameter (lambda)
-                        lambda_l1 = 0.4  # Adjust this value depending on how much regularization you want
-                        
-                        # Total loss with L1 penalty
-                        total_loss = mse_loss + lambda_l1 * l1_penalty
+                        total_loss = mse_loss 
 
                         test_loss_epoch += total_loss.item()
                         signal_power_test += signal_power.item()
