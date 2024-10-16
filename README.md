@@ -1,6 +1,5 @@
 # Model based deep learning for successive convex approximation 
+This is the official repository containing all the code to run the simulations and test the learning algorithm proposed in the master's thesis in Data Science \textbf{Deep-unrolled Successive Convex Approximation for
+nonconvex sparse learning} (a.y. 2023/24)
 
-The purpose of this project is to apply techniques coming from model based deep learning (algorithm unrolling, proximality learning, neural augmentation...) to the Successive Convex Approximation (SCA) framework. 
-The aim is to define a general framework for nonconvex optimization, which spreads in many different problems in machine larning and signal processing. 
-
-We start from some motivating examples, like nonconvex variations of the LASSO and matrix factorizations, moving towards more complex problems, like neural network training or optimization problems arising in goal-oriented communications. 
+# Abstract
