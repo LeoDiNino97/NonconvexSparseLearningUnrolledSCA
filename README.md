@@ -10,10 +10,17 @@ nonconvex sparse learning*** (a.y. 2023/24)
 
 # Results
 + Increased precision in support detection;
++ ![image](https://github.com/user-attachments/assets/340f75a2-18ae-4d15-be65-0b91583e1f33)
+
 + Increased robustness to measurement matrix conditioning;
+  ![image](https://github.com/user-attachments/assets/ff7c14b4-39e8-4716-ad31-9518acc1b26f)
+
 + Increased reconstruction performances
+  ![image](https://github.com/user-attachments/assets/e41ff15f-7368-434b-958e-d3ad36046a15)
+
 
 The model has been tested on real data in a naturale image denoising task over BSD500, outperforming ALISTA in terms of PSNR. 
   
+![image](https://github.com/user-attachments/assets/0b6540ca-feac-415c-9806-a7a65ab27dc1)
 
 
