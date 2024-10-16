@@ -4,8 +4,11 @@ nonconvex sparse learning*** (a.y. 2023/24)
 
 # Methodological background
 + Defined the sparse least squares problem with Difference-of-convex Sparsity Inducing Penalties:
+  
   <img src="https://github.com/user-attachments/assets/7d409319-aa42-4591-84b5-3b46e7cb0a8e" alt="Image 1" width="300"/>
+  
   <img src="https://github.com/user-attachments/assets/7846d473-c33e-4aad-9908-7b9c84ecbc64" alt="Image 2" width="300"/>
+  
   <img src="https://github.com/user-attachments/assets/5326224f-56fc-49f8-afde-bcd5521274f7" alt="Image 3" width="300"/>
 
 + Solved it with Successive Convex Approximation, retrieving a fundamental functional form;
