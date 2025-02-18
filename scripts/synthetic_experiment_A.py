@@ -75,19 +75,19 @@ print('------------Starting training LePOM------------')
 model_6 = LePOM_CP(torch.clone(A_), lambd_0, T = T)
 layerwise_train(model_6, 'POM', 'LePOM', generator, lr = DD_lr, ft_lr = DD_ft_lr, verbose=True)
 
-# Store models checkpoints
-torch.save(model_1.state_dict(), "model_1_NOISY_weights.pth")
-torch.save(model_2.state_dict(), "model_2_NOISY_weights.pth")
-torch.save(model_3.state_dict(), "model_3_NOISY_weights.pth")
-torch.save(model_4.state_dict(), "model_4_NOISY_weights.pth")
-torch.save(model_5.state_dict(), "model_5_NOISY_weights.pth")
-torch.save(model_6.state_dict(), "model_6_NOISY_weights.pth")
 
+print('------------Saving models checkpoints------------')
+# Store models checkpoints
+torch.save(model_1.state_dict(), r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/ckpts/model_1_NOISY_weights.pth")
+torch.save(model_2.state_dict(), r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/ckpts/model_2_NOISY_weights.pth")
+torch.save(model_3.state_dict(), r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/ckpts/model_3_NOISY_weights.pth")
+torch.save(model_4.state_dict(), r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/ckpts/model_4_NOISY_weights.pth")
+torch.save(model_5.state_dict(), r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/ckpts/model_5_NOISY_weights.pth")
+torch.save(model_6.state_dict(), r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/ckpts/model_6_NOISY_weights.pth")
+
+print('------Testing models in noisy scenarios--------')
 # Test them in noisy scenarios
 SNRs = [1] + list(range(5,100,5))
-n_ = 500
-m_ = 250
-p_ = 0.1
 
 noisy_scenarios = {SNR: {
     'ALISTA':0,
@@ -120,7 +120,7 @@ for SNR_ in tqdm(SNRs):
         noisy_scenarios[SNR_]['LePOM'] += model_6.compute_nmse_inference(test_set)[-1].cpu()
 
 # Store results
-with open(r'results/noisy_noiseless_scenarios.pkl', 'wb') as handle:
+with open(r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/results/reconstruction_noisy.pkl", 'wb') as handle:
     pickle.dump(noisy_scenarios, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 # Visualization
@@ -179,10 +179,104 @@ plt.grid(True, which="both", linestyle="--", linewidth=0.6, alpha=0.7)
 # Adjust legend placement
 plt.legend(fontsize=12, fancybox=True, shadow=True, frameon=True, loc='upper right')
 
-
 # Save the plot
-plt.savefig(r"plots/reconstruction_error_1.png", dpi=600, bbox_inches="tight", format="png")  
+plt.savefig(r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/plots/reconstruction_error_1.png", dpi=600, bbox_inches="tight", format="png")  
 
 # Show the plot
 plt.show()
 
+print('--------Testing models in noiseless scenarios-------')
+noiseless_scenarios = {
+    'ALISTA':np.zeros(T),
+    'LISTA-CPSS':np.zeros(T),
+    'AL-DC-ISTA-PNEG':np.zeros(T),
+    'L-DC-ISTA-CPSS-PNEG':np.zeros(T),
+    'ALePOM':np.zeros(T),
+    'LePOM':np.zeros(T)
+}
+
+
+for _ in range(10):
+    test_set = SyntheticSignals(
+        A = A_,
+        n = n_,        
+        m = m_,
+        p = p_,
+        SNR = 10**(SNR_/10),
+        size = 1000
+        ).set_loader()
+
+    noiseless_scenarios['ALISTA'] += model_1.compute_nmse_inference(test_set).cpu().numpy()
+    noiseless_scenarios['LISTA-CPSS'] += model_2.compute_nmse_inference(test_set).cpu().numpy()
+
+    noiseless_scenarios['AL-DC-ISTA-PNEG'] += model_3.compute_nmse_inference(test_set).cpu().numpy()
+    noiseless_scenarios['L-DC-ISTA-CPSS-PNEG'] += model_4.compute_nmse_inference(test_set).cpu().numpy()
+
+    noiseless_scenarios['ALePOM'] += model_5.compute_nmse_inference(test_set)[-1].cpu().numpy()
+    noiseless_scenarios['LePOM'] += model_6.compute_nmse_inference(test_set)[-1].cpu().numpy()
+
+# Store results
+with open(r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/results/reconstruction_noiseless.pkl", 'wb') as handle:
+    pickle.dump(noisy_scenarios, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+# Visualization
+# Set global font
+plt.rcParams["font.family"] = "Times New Roman"
+
+# Increase figure size for better visibility
+plt.figure(figsize=(10, 6), dpi=600)
+
+models = [
+    'ALISTA',
+    'LISTA-CPSS',
+    'AL-DC-ISTA-PNEG',
+    'L-DC-ISTA-CPSS-PNEG',
+    'ALePOM',
+    'LePOM'
+]
+
+linestyles = [
+    "-",    # Solid
+    "-",   # Dashed
+    "--",    # Solid
+    "--",   # Dashed
+    ":",
+    ":"]
+
+markers = ["o", "s", "o", "s", "o", "s"]
+colors = [
+    [0, 0.4470, 0.7410],   
+    [0, 0.4470, 0.7410],  
+    [0.8500, 0.3250, 0.0980],  
+    [0.8500, 0.3250, 0.0980],  
+    [0.9290, 0.6940, 0.1250],  
+    [0.9290, 0.6940, 0.1250]   
+]
+
+
+# Plot each model
+for i, model_ in enumerate(models):
+    plt.plot(range(T), 
+             noiseless_scenarios[model_] / 10 , 
+             label=models[i], 
+             color=colors[i], 
+             marker=markers[i], 
+             linestyle=linestyles[i],
+             markersize=6, linewidth=2.5)
+plt.xticks(range(T))
+
+# Axis labels
+plt.ylabel('NMSE (dB)', fontsize=14)
+plt.xlabel('Layer index', fontsize=14)
+
+# Beautify the grid
+plt.grid(True, which="both", linestyle="--", linewidth=0.6, alpha=0.7)
+
+# Adjust legend placement
+plt.legend(fontsize=12, fancybox=True, shadow=True, frameon=True, loc='upper right')
+
+# Save the plot
+plt.savefig(r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/plots/reconstruction_error_2.png", dpi=600, bbox_inches="tight", format="png")  
+
+# Show the plot
+plt.show()

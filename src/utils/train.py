@@ -167,7 +167,7 @@ def train_ops(
             
             if epoch > patience:
                 val_window.pop(0)                
-                rel_improvement = abs((val_window[0] - val_window[-1]))
+                rel_improvement = abs((val_window[0] - val_window[-1])) / abs(val_window[0] + 1e-6)
                 if rel_improvement < 1e-3:
                     if verbose:
                         print(f"Early stopping triggered due to small improvement: {abs((val_window[0] - val_window[-1])):.6f}")
@@ -270,7 +270,6 @@ def layerwise_train(
     
     wandb.finish()
     return loss_train_all, loss_test_all
-
 
 
 ####################################################
