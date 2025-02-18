@@ -54,8 +54,8 @@ class SyntheticSignals():
         
         # Adding noise based on the SNR if provided
         if self.SNR is not None:
-            self.var = torch.mean(self.y[i, :]**2) / self.SNR
-            self.y[i, :] += torch.normal(mean=0, std=torch.sqrt(self.var), size=(self.m,))
+            var = torch.mean(self.y[i, :]**2) / self.SNR
+            self.y[i, :] += torch.normal(mean=0, std=torch.sqrt(var), size=(self.m,))
 
     def set_data(self, seed = 42):
         torch.manual_seed(seed)
@@ -66,3 +66,50 @@ class SyntheticSignals():
         return Data.DataLoader(dataset=Data.TensorDataset(self.y, self.x),
                                batch_size=self.batch_size,
                                shuffle=True)
+    
+import torch
+
+class SyntheticSignalsOnline:
+    def __init__(self, A, n, m, p=0.1, SNR=None, discretized=False):
+        self.n = n  
+        self.m = m  
+        self.p = p  
+        self.SNR = SNR  
+        self.discretized = discretized  
+
+        if A is None:                            
+            self.A = self.A_initialization()          
+        else:
+            assert A.shape == (m, n), "A must have shape (m, n)"
+            self.A = A
+
+    def A_initialization(self):
+        A = torch.normal(0, torch.sqrt(torch.tensor(1/self.m)), size=(self.m, self.n))
+        return A / torch.linalg.norm(A, dim=0)  # Normalize columns
+
+    def emit_data(self, size):
+        """Generate sparse signals x and their corresponding linear projections y."""
+        
+        # Generate sparse indices
+        mask = torch.rand(size, self.n) < self.p  # Boolean mask for sparsity
+
+        # Generate sparse values
+        if self.discretized:
+            x = torch.where(mask, torch.randint(0, 2, (size, self.n), dtype=torch.float32) * 2 - 1, torch.tensor(0.0))
+        else:
+            x = torch.zeros(size, self.n)
+            num_nonzero = mask.sum().item()
+            x[mask] = torch.normal(0, 1, size=(num_nonzero,))  # Fill only non-zero indices
+
+        # Generate linear projections
+        y = x @ self.A.T  # Matrix multiplication, batch-wise
+
+        # Add noise if SNR is specified
+        if self.SNR is not None:
+            var = torch.mean(y**2) / self.SNR  # Compute noise variance
+            noise = torch.normal(0, torch.sqrt(var), size=y.shape)  # Generate noise
+            y += noise  
+
+        return y, x
+
+        

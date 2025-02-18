@@ -17,7 +17,17 @@ import warnings
 warnings.filterwarnings("ignore")
 
 class ALDC_ISTA(nn.Module):
-    def __init__(self, A, mode, lambd=0.1, p =0.012, p_max = 0.12, T = 5, W = None):
+    def __init__(
+            self, 
+            A, 
+            mode, 
+            lambd=0.1, 
+            p =0.012, 
+            p_max = 0.12, 
+            T = 5, 
+            W = None,
+            SS = False):
+        
         super().__init__()
     
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -25,7 +35,7 @@ class ALDC_ISTA(nn.Module):
         assert mode in ['EXP', 'PNEG', 'SCAD']
 
         self.mode = mode
-
+        self.linear_shared = True
         self.A = A.to(self.device)  # Move A to the correct device
         self.A.requires_grad = False
 
@@ -35,18 +45,20 @@ class ALDC_ISTA(nn.Module):
 
         # Initialization of the learnable parameters
 
+        self.lambd = [torch.tensor(lambd / self.L, device=self.device).reshape(1, 1) for _ in range(self.T + 1)]
+        '''
         self.lambd = nn.ParameterList([
             nn.Parameter(torch.tensor(1).reshape(1, 1).to(self.device) * lambd / self.L, requires_grad=True)
             for _ in range(self.T + 1)
         ])
-
+        '''
         self.mu = nn.ParameterList([
-            nn.Parameter(torch.tensor(1).reshape(1, 1).to(self.device) / self.L, requires_grad=True)
+            nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device), requires_grad=True)
             for _ in range(self.T + 1)
         ])
 
         self.theta = nn.ParameterList([
-            nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device) * 5, requires_grad=True)
+            nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device), requires_grad=True)
             for _ in range(self.T + 1)
             ])
         
@@ -62,6 +74,10 @@ class ALDC_ISTA(nn.Module):
         # Support selection mechanism parameters
         self.p = p
         self.p_max = p_max
+        if SS: 
+            self._shrink = self._shrink_SS
+        else:
+            self._shrink = self._shrink_FS
 
         # Losses when doing inference (placeholder for NMSE accumulation)
         self.losses = torch.zeros(self.T, device=self.device)
@@ -85,7 +101,7 @@ class ALDC_ISTA(nn.Module):
         if mode == 'SCAD':
        
             self.a = nn.ParameterList([
-            nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device)*10, requires_grad=True)
+            nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device), requires_grad=True)
             for _ in range(self.T + 1)
             ])        
             self.ddx = self.ddxSCAD
@@ -118,13 +134,13 @@ class ALDC_ISTA(nn.Module):
         abs_x = torch.abs(x)
 
         mask1 = (abs_x <= 1)
-        mask2 = (1 / self.theta[t] < abs_x) & (abs_x <= self.a[t] / self.theta[t])
-        mask3 = (abs_x > self.a[t] / self.theta[t])
+        mask2 = (1 / self.theta[t] < abs_x) & (abs_x <= (2 + F.softplus(self.a[t])) / self.theta[t])
+        mask3 = (abs_x > (2 + F.softplus(self.a[t])) / self.theta[t])
 
         # Compute the value for each condition
         val1 = torch.zeros_like(x)
-        val2 = torch.sign(x) * (2 * self.theta[t] * (self.theta[t] * abs_x - 1)) / (self.a[t] ** 2 - 1)
-        val3 = torch.sign(x) * (2 * self.theta[t] / (self.a[t] + 1))
+        val2 = torch.sign(x) * (2 * self.theta[t] * (self.theta[t] * abs_x - 1)) / ((2 + F.softplus(self.a[t])) ** 2 - 1)
+        val3 = torch.sign(x) * (2 * self.theta[t] / ((2 + F.softplus(self.a[t])) + 1))
 
         # Apply the masks to compute the final result
         result = torch.where(mask1, val1, torch.where(mask2, val2, val3))
@@ -139,12 +155,16 @@ class ALDC_ISTA(nn.Module):
         return -self.P[t] * self.theta[t]
 
     def etaSCAD(self, t):
-        return 2 * self.theta[t] / (self.a[t] + 1)
+        return 2 * self.theta[t] / ((2 + F.softplus(self.a[t])) + 1)
     
     #___________________________________________________________________
     #___________________________________________________________________
-        
-    def _shrink(self, x, beta, t):
+    
+    def _shrink_FS(self, x, beta, t):
+        # Apply soft thresholding directly to all elements
+        return beta * F.softshrink(x / beta, lambd=1)
+
+    def _shrink_SS(self, x, beta, t):
         # Get the absolute values of the elements in x
         abs_x = torch.abs(x)
         
@@ -219,43 +239,4 @@ class ALDC_ISTA(nn.Module):
 
         # Return NMSE in dB for each layer
         return nmse_db
-
-def compute_support(self, test_loader, supp):
-    # Reset the losses accumulator
-    self.losses = torch.zeros(self.T, device=self.device)
-    
-    total_precision = 0.0
-    total_samples = 0
-    
-    # Iterate over test_loader
-    for _, (Y, S) in enumerate(test_loader):
-        Y, S = Y.to(self.device), S.to(self.device)
-        X = self.forward(y = Y, its = None, S = S)
-
-        # Hard threshold X by retaining the top `supp` largest components in absolute value
-        topk_vals, topk_indices = torch.topk(X.abs(), supp, dim=1)
-        X_thresholded = torch.zeros_like(X)
-        X_thresholded.scatter_(1, topk_indices, topk_vals)
-        X_thresholded = (X_thresholded > 0).float()  # Create a binary support mask for X
-
-        # Create a binary support mask for S (ground truth support)
-        S_support = (S != 0).float()
-
-        # True positives (correctly identified non-zeros)
-        true_positives = (X_thresholded * S_support).sum(dim=1)
-
-        # Predicted positives (all non-zeros in X_thresholded)
-        predicted_positives = X_thresholded.sum(dim=1)
-
-        # Precision = True positives / Predicted positives (avoiding division by zero)
-        precision = true_positives / (predicted_positives + 1e-10)
-
-        # Sum precision for this batch
-        total_precision += precision.sum().item()
-        total_samples += Y.size(0)
-    
-    # Compute the average precision over all batches
-    average_precision = total_precision / total_samples
-    return average_precision
-
 

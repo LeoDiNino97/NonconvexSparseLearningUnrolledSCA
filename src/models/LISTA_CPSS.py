@@ -6,7 +6,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 class LISTA_CPSS(nn.Module):
-    def __init__(self, A, beta_ = 0.1, T = 5, p = 0.012, p_max = 0.12):
+    def __init__(self, A, beta_ = 0.1, T = 5, p = 0.012, p_max = 0.14, SS = False):
         super(LISTA_CPSS, self).__init__()
 
         # Automatically set device to 'cuda' if available, otherwise 'cpu'
@@ -36,12 +36,20 @@ class LISTA_CPSS(nn.Module):
         # Support selection mechanism parameters
         self.p = p
         self.p_max = p_max
+        if SS: 
+            self._shrink = self._shrink_SS
+        else:
+            self._shrink = self._shrink_FS
 
         # Losses when doing inference
         self.losses = torch.zeros(self.T, device=self.device)
         self.est_powers = torch.zeros(self.T, device=self.device)
 
-    def _shrink(self, x, beta, t):
+    def _shrink_FS(self, x, beta, t):
+        # Apply soft thresholding directly to all elements
+        return beta * F.softshrink(x / beta, lambd=1)
+
+    def _shrink_SS(self, x, beta, t):
         # Get the absolute values of the elements in x
         abs_x = torch.abs(x)
         

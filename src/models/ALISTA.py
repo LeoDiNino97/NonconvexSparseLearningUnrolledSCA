@@ -4,7 +4,15 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 class ALISTA(nn.Module):
-    def __init__(self, A, beta_ = 0.1, T=5, p = 0.012, p_max = 0.12):
+    def __init__(
+            self, 
+            A, 
+            beta_ = 0.1, 
+            T=5, 
+            p = 0.012, 
+            p_max = 0.12,
+            SS = False):
+        
         super(ALISTA, self).__init__()
 
         # Set device (CPU or GPU)
@@ -25,7 +33,7 @@ class ALISTA(nn.Module):
         ])
 
         self.mu = nn.ParameterList([
-            nn.Parameter(torch.tensor(1 / norm).reshape(1, 1).to(self.device), requires_grad=True)
+            nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device), requires_grad=True)
             for _ in range(self.T + 1)
         ])
 
@@ -35,6 +43,10 @@ class ALISTA(nn.Module):
         # Support selection mechanism parameters
         self.p = p
         self.p_max = p_max
+        if SS: 
+            self._shrink = self._shrink_SS
+        else:
+            self._shrink = self._shrink_FS
 
         # Losses when doing inference
         self.losses = torch.zeros(self.T, device=self.device)
@@ -52,10 +64,14 @@ class ALISTA(nn.Module):
         print('Linear layer initialized minimizing coherence!')
         return torch.from_numpy(W.value).float()
 
-    def _shrink(self, x, beta, t):
+    def _shrink_FS(self, x, beta, t):
+        # Apply soft thresholding directly to all elements
+        return beta * F.softshrink(x / beta, lambd=1)
+
+    def _shrink_SS(self, x, beta, t):
         # Get the absolute values of the elements in x
         abs_x = torch.abs(x)
-        
+
         # Sort the elements of x by magnitude along the last dimension (num_features)
         sorted_abs_x, _ = torch.sort(abs_x, dim=-1, descending=True)
 
@@ -124,38 +140,3 @@ class ALISTA(nn.Module):
 
         # Return NMSE in dB for each layer
         return nmse_db
-        
-    def compute_support(self, test_loader):
-        # Reset the losses accumulator
-        self.losses = torch.zeros(self.T, device=self.device)
-        
-        total_precision = 0.0
-        total_samples = 0
-        
-        # Iterate over test_loader
-        for _, (Y, S) in enumerate(test_loader):
-            Y, S = Y.to(self.device), S.to(self.device)
-            X = self.forward(y = Y, its = None)
-
-            # Hard threshold X by retaining the top `supp` largest components in absolute value
-            X_thresholded = (X != 0).float()  # Create a binary support mask for X
-
-            # Create a binary support mask for S (ground truth support)
-            S_support = (S != 0).float()
-
-            # True positives (correctly identified non-zeros)
-            true_positives = (X_thresholded * S_support).sum(dim=1)
-
-            # Predicted positives (all non-zeros in X_thresholded)
-            predicted_positives = X_thresholded.sum(dim=1)
-
-            # Precision = True positives / Predicted positives (avoiding division by zero)
-            precision = true_positives / (predicted_positives + 1e-10)
-
-            # Sum precision for this batch
-            total_precision += precision.sum().item()
-            total_samples += Y.size(0)
-        
-        # Compute the average precision over all batches
-        average_precision = total_precision / total_samples
-        return average_precision
