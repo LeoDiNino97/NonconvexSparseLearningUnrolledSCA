@@ -42,7 +42,7 @@ class SyntheticSignals():
         self.x[i, :] = 0
 
         # Generating random sparsity in the canonical basis of the original signal
-        idxs = np.where(np.random.rand(self.n) < self.p)[0]  
+        idxs = np.random.choice(self.n, int(self.p * self.n), replace=False)
         if self.discretized:
           peaks = np.random.choice([-1, 1], size=idxs.shape[0])
         else:
@@ -58,7 +58,6 @@ class SyntheticSignals():
             self.y[i, :] += torch.normal(mean=0, std=torch.sqrt(var), size=(self.m,))
 
     def set_data(self, seed = 42):
-        torch.manual_seed(seed)
         for i in range(self.size):
             self.set_tuple(i)
     
@@ -67,8 +66,6 @@ class SyntheticSignals():
                                batch_size=self.batch_size,
                                shuffle=True)
     
-import torch
-
 class SyntheticSignalsOnline:
     def __init__(self, A, n, m, p=0.1, SNR=None, discretized=False):
         self.n = n  
@@ -91,8 +88,20 @@ class SyntheticSignalsOnline:
         """Generate sparse signals x and their corresponding linear projections y."""
         
         # Generate sparse indices
-        mask = torch.rand(size, self.n) < self.p  # Boolean mask for sparsity
+        mask = torch.zeros(size, self.n, dtype=torch.bool)  # Initialize mask
 
+        # Generate random indices for each row
+        cols = torch.stack([
+            torch.tensor(np.random.choice(self.n, int(self.p * self.n), replace=False))
+            for _ in range(size)
+        ], dim=0)  # Shape: (size, int(self.p * self.n))
+
+        rows = torch.arange(size).repeat_interleave(int(self.p * self.n))  # Repeat row indices
+        cols = cols.flatten()  # Flatten column indices
+
+        # Set selected indices to True
+        mask[rows, cols] = True
+        
         # Generate sparse values
         if self.discretized:
             x = torch.where(mask, torch.randint(0, 2, (size, self.n), dtype=torch.float32) * 2 - 1, torch.tensor(0.0))

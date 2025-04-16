@@ -1,17 +1,9 @@
-import numpy as np
-import cvxpy as cp
-
-from tqdm import tqdm
-from matplotlib import pyplot as plt
-from matplotlib.ticker import MaxNLocator
-
-import pickle
-
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
-import torch.utils.data as Data
-import matplotlib.pyplot as plt
+
+import cvxpy as cp
+import numpy as np
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -25,12 +17,14 @@ class L_DC_ISTA_CPSS(nn.Module):
             p =0.012, 
             p_max = 0.13, 
             T = 5, 
-            SS = False):
+            SS = False,
+            W_init = None, 
+            preopt = False):
         super().__init__()
     
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        assert mode in ['EXP', 'PNEG', 'SCAD']
+        assert mode in ['EXP', 'PNEG', 'SCAD', 'MCP']
 
         self.mode = mode
 
@@ -43,28 +37,36 @@ class L_DC_ISTA_CPSS(nn.Module):
 
         # Initialization of the learnable parameters
 
-        self.lambd = [torch.tensor(lambd / self.L, device=self.device).reshape(1, 1) for _ in range(self.T + 1)]
-        '''
+        #self.lambd = [torch.tensor(lambd / self.L, device=self.device).reshape(1, 1) for _ in range(self.T)]
         self.lambd = nn.ParameterList([
             nn.Parameter(torch.tensor(1).reshape(1, 1).to(self.device) * lambd / self.L, requires_grad=True)
-            for _ in range(self.T + 1)
+            for _ in range(self.T)
         ])
-        '''
-        self.mu = nn.ParameterList([
-            nn.Parameter(torch.tensor(1).reshape(1, 1).to(self.device) / self.L, requires_grad=True)
-            for _ in range(self.T + 1)
-        ])
+        
         self.theta = nn.ParameterList([
             nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device), requires_grad=True)
-            for _ in range(self.T + 1)
+            for _ in range(self.T)
             ])
         
+        norm = (1.001 * torch.linalg.norm(self.A.T @ self.A, 2))
+
         # Linear layers
         self.Ws = nn.ModuleList()
-        for _ in range(self.T + 1):
-            W = nn.Linear(A.shape[1], A.shape[0], bias=False).to(self.device)
-            W.weight.data = torch.clone(self.A.T).to(self.device) / self.L
-            self.Ws.append(W)
+        if preopt:
+            if W_init is None:
+                W_ = self.W_optimization().to(self.device)
+            else:
+                W_ = W_init
+
+            for _ in range(self.T):
+                W = nn.Linear(A.shape[1], A.shape[0], bias=False).to(self.device)
+                W.weight.data = torch.clone(W_.T).to(self.device) 
+                self.Ws.append(W)
+        else:
+            for _ in range(self.T + 1):
+                W = nn.Linear(A.shape[1], A.shape[0], bias=False).to(self.device)
+                W.weight.data = torch.clone(self.A.T).to(self.device) / norm
+                self.Ws.append(W)
 
         # Support selection mechanism parameters
         self.p = p
@@ -88,7 +90,7 @@ class L_DC_ISTA_CPSS(nn.Module):
 
             self.P = nn.ParameterList([
             nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device) * (-0.1), requires_grad=True)
-            for _ in range(self.T + 1)
+            for _ in range(self.T)
             ])
             self.ddx = self.ddxNEG
             self.eta = self.etaNEG
@@ -97,11 +99,27 @@ class L_DC_ISTA_CPSS(nn.Module):
        
             self.a = nn.ParameterList([
             nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device), requires_grad=True)
-            for _ in range(self.T + 1)
+            for _ in range(self.T)
             ])        
             self.ddx = self.ddxSCAD
             self.eta = self.etaSCAD
 
+        if mode == 'MCP':
+
+            self.ddx = self.ddxMCP
+            self.eta = self.etaMCP
+
+    def W_optimization(self):
+        N, M = self.A.shape
+        W = cp.Variable((N, M))
+
+        objective = cp.Minimize(cp.norm(W.T @ self.A.cpu().numpy(), 'fro'))
+        constraints = [W[:, m].T @ self.A.cpu().numpy()[:, m] == 1 for m in range(M)]
+        prob = cp.Problem(objective, constraints)
+
+        prob.solve(solver=cp.MOSEK)
+        print('Linear layer initialized minimizing coherence!')
+        return torch.from_numpy(W.value).float()
     
     # Derivatives of the nonconvex components
     def ddxEXP(self, x, t):
@@ -126,7 +144,20 @@ class L_DC_ISTA_CPSS(nn.Module):
         result = torch.where(mask1, val1, torch.where(mask2, val2, val3))
 
         return result
+    
+    def ddxMCP(self, x, t):
 
+        abs_x = torch.abs(x)
+        mask1 = (abs_x < 1 )
+        mask2 = (abs_x >= 1)
+        
+        theta = 1 / (4 * self.lambd[t])
+        val1 = 1 / (2 * theta) * x
+        val2 = 1 / (2 * theta) * torch.sign(x)
+        
+        result = torch.where(mask1, val1, val2)
+        return result
+    
     # Parametrization for the surrogates
     def etaEXP(self, t):
         return self.theta[t]
@@ -137,6 +168,8 @@ class L_DC_ISTA_CPSS(nn.Module):
     def etaSCAD(self, t):
         return 2 * self.theta[t] / ((2 + F.softplus(self.a[t])) + 1)
     
+    def etaMCP(self, t):
+        return 1 
     #___________________________________________________________________
     #___________________________________________________________________
         
@@ -152,7 +185,7 @@ class L_DC_ISTA_CPSS(nn.Module):
         sorted_abs_x, _ = torch.sort(abs_x, dim=-1, descending=True)
 
         # Determine the threshold index corresponding to the top p% elements in each sample
-        p = torch.min(torch.tensor([self.p * t, self.p_max], device=self.device))
+        p = torch.min(torch.tensor([self.p * (t + 1), self.p_max], device=self.device))
         threshold_idx = int(p * x.shape[-1])
         
         # Get the magnitude threshold for the top p% of elements (per batch)
@@ -171,53 +204,50 @@ class L_DC_ISTA_CPSS(nn.Module):
         return torch.where(mask, x, x_shrink)
 
 
-    def forward(self, y, its=None, S=None):     
-        # Move inputs to the correct device
+    def forward(self, y, its=None, S=None):
         if its is None:
-            its = self.T
-            
+            its = self.T - 1            
         y = y.to(self.device)
         if S is not None:
             S = S.to(self.device)
 
-        # Initial sparse estimate using the first layer
-        h = self.Ws[0](y)
-        x = self._shrink(h, self.eta(0) * self.lambd[0], 1)
-        
-        # Loop over layers to refine the estimate
-        for t in range(1, its + 1):
-            k = self.Ws[t](torch.matmul(x, self.A.t()) - y) - self.lambd[t] * self.ddx(x, t)
-            h = x - k
-            x = self._shrink(h, self.eta(t) * self.lambd[t], t)
-            
-            if S is not None:  # During inference, compute the NMSE at each layer
-                with torch.no_grad():
-                    mse_loss = F.mse_loss(x.detach(), S.detach(), reduction="sum")
-                    signal_power = torch.sum(S.detach() ** 2)
+        for t in range(its + 1):
+            if t == 0:
+                h = self.Ws[t](y) 
+            else:
+                k = self.Ws[t](torch.matmul(x, self.A.t()) - y) - self.lambd[t] * self.ddx(x, t)
+                h = x - k
 
-                    self.losses[t - 1] += mse_loss.item()
-                    self.est_powers[t - 1] += signal_power.item() + 1e-6
+            x = self._shrink(h, self.eta(t) * self.lambd[t], t)
+
+            if S is not None:
+                self.update_loss_metrics(t, x, S)
 
         return x
 
-    # Method to compute NMSE during inference mode
+    def update_loss_metrics(self, t, x, S):
+        with torch.no_grad():
+            mse_loss = F.mse_loss(x.detach(), S.detach(), reduction="sum")
+            signal_power = torch.sum(S.detach() ** 2)
+
+            self.losses[t] += mse_loss.item()
+            self.est_powers[t] += signal_power.item() + 1e-6
+
     def compute_nmse_inference(self, test_loader):
         # Reset the losses accumulator
         self.losses = torch.zeros(self.T, device=self.device)
+        self.est_powers = torch.zeros(self.T, device=self.device)
         
         # Iterate over test_loader
         for _, (Y, S) in enumerate(test_loader):
             Y, S = Y.to(self.device), S.to(self.device)
-            _ = self.forward(y = Y, its = None, S = S)  # This will accumulate NMSE values
+            _ = self.forward(y=Y, its=None, S=S)  # This will accumulate NMSE values
         
         # Convert accumulated NMSE to dB
         nmse_db = 10 * torch.log10(self.losses / self.est_powers)
-        
-        # Reset the losses after inference
-        self.losses = torch.zeros(self.T, device=self.device)
-        self.est_powers = torch.zeros(self.T, device=self.device)
 
         # Return NMSE in dB for each layer
         return nmse_db
+
 
 

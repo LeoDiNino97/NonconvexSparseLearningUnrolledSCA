@@ -15,7 +15,7 @@ def get_params(model,
     params = []
     if phase == 'Layer':
         if family == 'DC':
-            #params.append(model.lambd[t]) 
+            params.append(model.lambd[t]) 
             params.append(model.theta[t])
             if model_class == 'AL-DC-ISTA':
                 params.append(model.mu[t])
@@ -48,8 +48,8 @@ def get_params(model,
     if phase == 'Fine-tune':
 
         if family == 'DC':
-            params += list(model.theta)[:t+1] 
-            #params = list(model.lambd)[:t+1] + list(model.theta)[:t+1] 
+            #params += list(model.lambd)[:t+1] 
+            params = list(model.lambd)[:t+1] + list(model.theta)[:t+1] 
             if model_class == 'AL-DC-ISTA':
                 params += list(model.mu)[:t+1]
             if model_class == 'L-DC-ISTA-CPSS':
@@ -87,7 +87,111 @@ def get_params(model,
 
     return params
 
-def train_ops(
+def train_ops_batch(
+        model, 
+        train_loader,   
+        valid_loader,      
+        t, 
+        optimizer, 
+        scheduler,
+        patience,
+        max_epochs, 
+        eps, 
+        verbose,):
+    
+    loss_train = []
+    loss_test = []
+    val_window = []
+    
+    best_val_loss = float('inf')
+    epochs_since_improvement = 0
+    best_model_state = None
+
+    for epoch in range(max_epochs):
+        model.train()
+        train_loss = 0.0
+        signal_power_train = 0.0
+
+        for Y, S in train_loader:
+            Y = Y.to(model.device)
+            S = S.to(model.device)
+
+            optimizer.zero_grad()
+            S_hat = model(y=Y, its=t, S = None)
+
+            mse_loss = F.mse_loss(S_hat, S, reduction="sum") 
+            signal_power = torch.sum(S ** 2)
+
+            loss = mse_loss
+            loss.backward()
+            optimizer.step()
+            #scheduler.step()
+
+            train_loss += mse_loss.item()
+            signal_power_train += signal_power.item()
+
+        nmse_train = train_loss / (signal_power_train + eps)
+        loss_train.append(10 * np.log10(nmse_train + eps))
+        
+        # Log training loss to wandb
+        wandb.log({"Train NMSE (dB)": loss_train[-1], "Epoch": epoch})
+        
+        if epoch % 10 == 0:
+            model.eval()
+            test_loss_epoch = 0.0
+            signal_power_test = 0.0
+
+            with torch.no_grad():
+                for Y, S in valid_loader:
+                    Y = Y.to(model.device)
+                    S = S.to(model.device)
+
+                    S_hat = model(Y, its=t)
+
+                    mse_loss = F.mse_loss(S_hat, S, reduction="sum")
+                    signal_power = torch.sum(S ** 2)
+
+                    test_loss_epoch += mse_loss.item()
+                    signal_power_test += signal_power.item()
+
+            nmse_test = test_loss_epoch / (signal_power_test + eps)
+            loss_test.append(10 * np.log10(nmse_test + eps))
+            val_window.append(loss_test[-1])
+            
+            # Log validation loss to wandb
+            wandb.log({"Validation NMSE (dB)": loss_test[-1], "Epoch": epoch})
+
+            if verbose and (epoch % 100 == 0):
+                print(
+                    f"Layer {t}, Step {epoch+1}, "
+                    f"Train NMSE (dB): {loss_train[-1]:.6f}, "
+                    f"Validation NMSE (dB): {loss_test[-1]:.6f}"
+                )
+            
+            if epoch > patience:
+                val_window.pop(0)                
+                rel_improvement = abs((val_window[0] - val_window[-1])) / abs(val_window[0] + 1e-6)
+                if rel_improvement < 1e-3:
+                    if verbose:
+                        print(f"Early stopping triggered due to small improvement: {abs((val_window[0] - val_window[-1])):.6f}")
+                    break
+
+            if loss_test[-1] < best_val_loss:
+                best_val_loss = loss_test[-1]
+                epochs_since_improvement = 0
+                best_model_state = model.state_dict()
+            else:
+                epochs_since_improvement += 1
+
+            if epochs_since_improvement >= patience:
+                if verbose:
+                    print(f"Early stopping triggered after {epoch+1} epochs")
+                model.load_state_dict(best_model_state)
+                break
+    
+    return loss_train, loss_test, epoch
+
+def train_ops_online(
         model, 
         generator, 
         Y_val,
@@ -99,7 +203,7 @@ def train_ops(
         patience,
         max_epochs, 
         eps, 
-        verbose):
+        verbose,):
     
     loss_train = []
     loss_test = []
@@ -127,7 +231,7 @@ def train_ops(
         loss = mse_loss
         loss.backward()
         optimizer.step()
-        scheduler.step()
+        #scheduler.step()
 
         train_loss += mse_loss.item()
         signal_power_train += signal_power.item()
@@ -167,8 +271,8 @@ def train_ops(
             
             if epoch > patience:
                 val_window.pop(0)                
-                rel_improvement = abs((val_window[0] - val_window[-1])) / abs(val_window[0] + 1e-6)
-                if rel_improvement < 1e-3:
+                abs_improvement = abs((val_window[0] - val_window[-1])) / abs(val_window[0])
+                if abs_improvement < 1e-3:
                     if verbose:
                         print(f"Early stopping triggered due to small improvement: {abs((val_window[0] - val_window[-1])):.6f}")
                     break
@@ -192,12 +296,15 @@ def layerwise_train(
         model, 
         family,
         model_class,
-        generator,
+        mode = 'Online',
+        generator = None,
+        train_loader = None,
+        valid_loader = None,
         DCSIP = None,
         train_batch_size = 64,
         val_batch_size = 1000,
-        lr=5e-4, 
-        ft_lr=3e-5,
+        lr_0=5e-4, 
+        ft_lr_0=3e-5,
         max_epochs=200000, 
         verbose=True, 
         eps=1e-6, 
@@ -208,8 +315,8 @@ def layerwise_train(
         "Scope": 'Sparse recovery',
         "Model class": model_class,
         "Family": family,
-        "Learning Rate": lr,
-        "Fine Tune Learning Rate": ft_lr,
+        "Initial Learning Rate": lr_0,
+        "Initial Fine Tune Learning Rate": ft_lr_0,
         "Train Batch Size": train_batch_size,
         "Max Epoch": max_epochs,
         "Fine Tune Epochs": ft_max_epochs,
@@ -221,14 +328,22 @@ def layerwise_train(
     loss_test_all = {}
     T = model.T
     
-    Y_val, S_val = generator.emit_data(val_batch_size)
-    Y_val = Y_val.to(device)
-    S_val = S_val.to(device)
-
+    if mode == 'Online':
+        Y_val, S_val = generator.emit_data(val_batch_size)
+        Y_val = Y_val.to(device)
+        S_val = S_val.to(device)
+        
+    if mode == 'Batch':
+        patience = 10
+        
     for t in range(T):
+        
         if t > 0:
-            lr *= 0.9
-            ft_lr *= 0.9
+            lr = (0.3 / t ) * lr_0 
+            ft_lr = (0.3 / t ) * ft_lr_0 
+        else:
+            lr = lr_0
+            ft_lr = ft_lr_0
             
         if verbose:
             print(f"===== Training Layer {t}/{T} =====")
@@ -236,10 +351,14 @@ def layerwise_train(
         params = get_params(model, family, model_class, DCSIP, phase='Layer', t=t)
         optimizer = optim.Adam(params, lr=lr, eps=eps)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epochs, eta_min=1e-6)
-
-        loss_train, loss_test, epoch = train_ops(model, generator, Y_val, S_val,
-                                          t, train_batch_size, optimizer, scheduler,
-                                          patience, max_epochs, eps, verbose)
+        if mode == 'Online':
+            loss_train, loss_test, epoch = train_ops_online(model, generator, Y_val, S_val,
+                                            t, train_batch_size, optimizer, scheduler,
+                                            patience, max_epochs, eps, verbose)
+        elif mode == 'Batch':
+            loss_train, loss_test, epoch = train_ops_batch(model, train_loader, valid_loader,
+                                            t, optimizer, scheduler,
+                                            patience, max_epochs, eps, verbose)            
 
         loss_train_all[f"Layer_{t+1}"] = loss_train[:epoch+1]
         loss_test_all[f"Layer_{t+1}"] = loss_test[:epoch+1]
@@ -256,10 +375,15 @@ def layerwise_train(
             optimizer_ft = optim.Adam(params, lr=ft_lr, eps=eps)
             scheduler_ft = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_ft, T_max=max_epochs, eta_min=1e-6)
 
-            loss_train_ft, loss_test_ft, epoch = train_ops(model, generator, Y_val, S_val,
+            if mode == 'Online':
+                loss_train_ft, loss_test_ft, epoch = train_ops_online(model, generator, Y_val, S_val,
                                           t, train_batch_size, optimizer_ft, scheduler_ft,
                                           patience, ft_max_epochs, eps, verbose)
-            
+            elif mode == 'Batch':
+                loss_train_ft, loss_test_ft, epoch = train_ops_batch(model, train_loader, valid_loader,
+                                          t, optimizer_ft, scheduler_ft,
+                                          patience, ft_max_epochs, eps, verbose)      
+                          
             loss_train_all["Fine_Tune"] = loss_train_ft[:epoch+1]
             loss_test_all["Fine_Tune"] = loss_test_ft[:epoch+1]
             
@@ -311,7 +435,7 @@ def train_U_ops(
             mse_loss = F.mse_loss(Y.T, torch.matmul(model.A, S_hat.T), reduction="sum")
             signal_power = torch.sum(Y ** 2)
 
-            loss = mse_loss + 0.2 * torch.sum(torch.abs(S_hat))
+            loss = mse_loss 
             loss.backward()
 
             # Apply gradient clipping
@@ -408,6 +532,9 @@ def layerwise_train_U(
     T = model.T
 
     for t in range(T):
+        if t > 0:
+            lr *= 0.9
+            ft_lr *= 0.9
 
         if verbose:
             print(f"===== Training Layer {t+1}/{T} =====")

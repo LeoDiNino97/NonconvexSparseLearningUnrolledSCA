@@ -79,50 +79,52 @@ class ALePOM(nn.Module):
         x_next = torch.where(cond1, case1, torch.where(cond2, case2, case3))
 
         return x_next
-
-    def forward(self, y, its = None, S=None):
+    
+    def forward(self, y, its=None, S=None):
         if its is None:
-            its = self.T
-            
+            its = self.T          
         y = y.to(self.device)
         if S is not None:
             S = S.to(self.device)
 
-        # Initial estimation with shrinkage
-        h = self.mu[0] * torch.matmul(y, self.W2.t())
-        x = self.proximal(h, self.beta[0])
-        
-        for t in range(1, its + 1):
-            k = self.mu[t] * (torch.matmul(x, self.W1.t()) - torch.matmul(y, self.W2.t()))
-            h = x - k
+        res = torch.matmul(y, self.W2.t())
+        x = None
+        for t in range(0, its + 1):
+            if t == 0:
+                h = self.mu[0] * res
+            else:
+                k = self.mu[t] * (torch.matmul(x, self.W1.t()) - res)
+                h = x - k
+
             x = self.proximal(h, self.beta[t])
 
-            # If ground truth is provided, calculate the loss for monitoring
             if S is not None:
-                with torch.no_grad():
-                    mse_loss = F.mse_loss(x.detach(), S.detach(), reduction="sum")
-                    signal_power = torch.sum(S.detach() ** 2)
-
-                    self.losses[t - 1] += mse_loss.item()
-                    self.est_powers[t - 1] += signal_power.item() + 1e-6
+                self.update_loss_metrics(t, x, S)
 
         return x
-    
+
+    def update_loss_metrics(self, t, x, S):
+        with torch.no_grad():
+            mse_loss = F.mse_loss(x.detach(), S.detach(), reduction="sum")
+            signal_power = torch.sum(S.detach() ** 2)
+
+            self.losses[t] += mse_loss.item()
+            self.est_powers[t] += signal_power.item() + 1e-6
+
     def compute_nmse_inference(self, test_loader):
         # Reset the losses accumulator
-        self.losses = torch.zeros(self.T, device=self.device)
+        self.losses = torch.zeros(self.T + 1, device=self.device)
+        self.est_powers = torch.zeros(self.T + 1, device=self.device)
         
         # Iterate over test_loader
         for _, (Y, S) in enumerate(test_loader):
             Y, S = Y.to(self.device), S.to(self.device)
-            _ = self.forward(y = Y, its = None, S = S)  # This will accumulate NMSE values
+            _ = self.forward(y=Y, its=None, S=S)  # This will accumulate NMSE values
         
         # Convert accumulated NMSE to dB
         nmse_db = 10 * torch.log10(self.losses / self.est_powers)
-        
-        # Reset the losses after inference
-        self.losses = torch.zeros(self.T, device=self.device)
-        self.est_powers = torch.zeros(self.T, device=self.device)
+    
 
         # Return NMSE in dB for each layer
         return nmse_db
+

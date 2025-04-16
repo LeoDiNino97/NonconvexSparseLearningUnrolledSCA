@@ -10,7 +10,7 @@ class ALISTA(nn.Module):
             beta_ = 0.1, 
             T=5, 
             p = 0.012, 
-            p_max = 0.12,
+            p_max = 0.13,
             SS = False):
         
         super(ALISTA, self).__init__()
@@ -29,12 +29,12 @@ class ALISTA(nn.Module):
         norm = (1.001 * torch.linalg.norm(self.A.T @ self.A, 2))
         self.beta = nn.ParameterList([
             nn.Parameter(torch.tensor(beta_ / norm).reshape(1, 1).to(self.device), requires_grad=True)
-            for _ in range(self.T + 1)
+            for _ in range(self.T)
         ])
 
         self.mu = nn.ParameterList([
             nn.Parameter(torch.tensor(1.0).reshape(1, 1).to(self.device), requires_grad=True)
-            for _ in range(self.T + 1)
+            for _ in range(self.T)
         ])
 
         self.W1 = torch.clone((self.W.T @ self.A)).to(self.device)
@@ -76,7 +76,7 @@ class ALISTA(nn.Module):
         sorted_abs_x, _ = torch.sort(abs_x, dim=-1, descending=True)
 
         # Determine the threshold index corresponding to the top p% elements in each sample
-        p = torch.min(torch.tensor([self.p * t, self.p_max], device=self.device))
+        p = torch.min(torch.tensor([self.p * (t + 1), self.p_max], device=self.device))
         threshold_idx = int(p * x.shape[-1])
         
         # Get the magnitude threshold for the top p% of elements (per batch)
@@ -94,42 +94,49 @@ class ALISTA(nn.Module):
         # Return the original values for the top p% and the shrinked values for others
         return torch.where(mask, x, x_shrink)
 
-    def forward(self, y, its = None, S=None):
+    def forward(self, y, its=None, S=None):
         if its is None:
-            its = self.T
-            
+            its = self.T - 1
+
         y = y.to(self.device)
         if S is not None:
             S = S.to(self.device)
 
-        # Initial estimation with shrinkage
-        h = self.mu[0] * torch.matmul(y, self.W2.t())
-        x = self._shrink(h, self.beta[0], 1)
-        
-        for t in range(1, its + 1):
-            k = self.mu[t] * (torch.matmul(x, self.W1.t()) - torch.matmul(y, self.W2.t()))
-            h = x - k
+        # Precomputing the residuals
+        res = torch.matmul(y, self.W2.t())
+        for t in range(its + 1):
+            if t == 0:
+                h = self.mu[0] * res
+            else:
+                k = self.mu[t] * (torch.sparse.mm(x.to_sparse(), self.W1.t()) - res)
+                h = x - k
+
             x = self._shrink(h, self.beta[t], t)
 
-            # If ground truth is provided, calculate the loss for monitoring
             if S is not None:
-                with torch.no_grad():
-                    mse_loss = F.mse_loss(x.detach(), S.detach(), reduction="sum")
-                    signal_power = torch.sum(S.detach() ** 2)
-
-                    self.losses[t - 1] += mse_loss.item()
-                    self.est_powers[t - 1] += signal_power.item() + 1e-6
+                self.update_loss_metrics(t, x, S)
 
         return x
-    
+
+
+    def update_loss_metrics(self, t, x, S):
+        with torch.no_grad():
+            mse_loss = F.mse_loss(x.detach(), S.detach(), reduction="sum")
+            signal_power = torch.sum(S.detach() ** 2)
+
+            self.losses[t] += mse_loss.item()
+            self.est_powers[t] += signal_power.item() + 1e-6
+
+
     def compute_nmse_inference(self, test_loader):
         # Reset the losses accumulator
         self.losses = torch.zeros(self.T, device=self.device)
+        self.est_powers = torch.zeros(self.T, device=self.device)
         
         # Iterate over test_loader
         for _, (Y, S) in enumerate(test_loader):
             Y, S = Y.to(self.device), S.to(self.device)
-            _ = self.forward(y = Y, its = None, S = S)  # This will accumulate NMSE values
+            _ = self.forward(y=Y, its=None, S=S)  # This will accumulate NMSE values
         
         # Convert accumulated NMSE to dB
         nmse_db = 10 * torch.log10(self.losses / self.est_powers)
