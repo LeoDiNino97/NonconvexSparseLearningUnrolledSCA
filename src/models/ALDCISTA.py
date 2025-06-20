@@ -63,7 +63,10 @@ class ALDC_ISTA(nn.Module):
             
         self.W1 = torch.clone((self.W.T @ self.A)).to(self.device)
         self.W2 = torch.clone(self.W.T).to(self.device)
-
+        self.W3 = nn.Linear(A.shape[1], A.shape[1], bias=False).to(self.device)
+        with torch.no_grad():
+            self.W3.weight.copy_(torch.eye(A.shape[1], device=self.device))
+            
         # Support selection mechanism parameters
         self.p = p
         self.p_max = p_max
@@ -104,6 +107,7 @@ class ALDC_ISTA(nn.Module):
 
             self.ddx = self.ddxMCP
             self.eta = self.etaMCP
+
     #_________________________________________________________________
     #______________ METHODS FOR ENABLING DIFFERENT LAYERS_____________
     #_________________________________________________________________
@@ -203,7 +207,6 @@ class ALDC_ISTA(nn.Module):
         # Return the original values for the top p% and the shrinked values for others
         return torch.where(mask, x, x_shrink)
 
-    
     def forward(self, y, its=None, S=None):     
         # Move inputs to the correct device
         if its is None:
@@ -219,7 +222,7 @@ class ALDC_ISTA(nn.Module):
             if t == 0:
                 x = self._shrink(self.mu[0] * res , self.eta(0) * self.lambd[0], 0)
             else:
-                x = self._shrink(x - self.mu[t] * (torch.matmul(x, self.W1.t()) - res) + self.lambd[t] * self.ddx(x, t), 
+                x = self._shrink(x - self.mu[t] * (torch.matmul(x, self.W1.t()) - res) + self.lambd[t] * self.W3(self.ddx(x, t)), 
                                 self.eta(t) * self.lambd[t],
                                 t)
                 
