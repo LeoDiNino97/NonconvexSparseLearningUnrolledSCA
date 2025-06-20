@@ -23,7 +23,7 @@ class ALDC_ISTA(nn.Module):
         
         super().__init__()
     
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
         assert mode in ['EXP', 'PNEG', 'SCAD', 'MCP']
 
@@ -64,6 +64,7 @@ class ALDC_ISTA(nn.Module):
         self.W1 = torch.clone((self.W.T @ self.A)).to(self.device)
         self.W2 = torch.clone(self.W.T).to(self.device)
         self.W3 = nn.Linear(A.shape[1], A.shape[1], bias=False).to(self.device)
+        
         with torch.no_grad():
             self.W3.weight.copy_(torch.eye(A.shape[1], device=self.device))
             

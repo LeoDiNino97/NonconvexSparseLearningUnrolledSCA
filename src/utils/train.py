@@ -240,7 +240,7 @@ def train_ops_online(
         loss_train.append(10 * np.log10(nmse_train + eps))
         
         # Log training loss to wandb
-        wandb.log({"Train NMSE (dB)": loss_train[-1], "Epoch": epoch})
+        #wandb.log({"Train NMSE (dB)": loss_train[-1], "Epoch": epoch})
         
         if epoch % 10 == 0:
             model.eval()
@@ -260,7 +260,7 @@ def train_ops_online(
             val_window.append(loss_test[-1])
             
             # Log validation loss to wandb
-            wandb.log({"Validation NMSE (dB)": loss_test[-1], "Epoch": epoch})
+            #wandb.log({"Validation NMSE (dB)": loss_test[-1], "Epoch": epoch})
 
             if verbose and (epoch % 100 == 0):
                 print(
@@ -311,16 +311,16 @@ def layerwise_train(
         ft_max_epochs=200000, 
         patience=2000):
     
-    wandb.init(project="Deep Sparse Coder", config={
-        "Scope": 'Sparse recovery',
-        "Model class": model_class,
-        "Family": family,
-        "Initial Learning Rate": lr_0,
-        "Initial Fine Tune Learning Rate": ft_lr_0,
-        "Train Batch Size": train_batch_size,
-        "Max Epoch": max_epochs,
-        "Fine Tune Epochs": ft_max_epochs,
-    })
+    # wandb.init(project="Deep Sparse Coder", config={
+    #     "Scope": 'Sparse recovery',
+    #     "Model class": model_class,
+    #     "Family": family,
+    #     "Initial Learning Rate": lr_0,
+    #     "Initial Fine Tune Learning Rate": ft_lr_0,
+    #     "Train Batch Size": train_batch_size,
+    #     "Max Epoch": max_epochs,
+    #     "Fine Tune Epochs": ft_max_epochs,
+    # })
     
     device = model.device
     model = model.to(device)
@@ -392,7 +392,7 @@ def layerwise_train(
             if verbose:
                 print("===== Finished Fine-Tuning =====\n")
     
-    wandb.finish()
+    # wandb.finish()
     return loss_train_all, loss_test_all
 
 

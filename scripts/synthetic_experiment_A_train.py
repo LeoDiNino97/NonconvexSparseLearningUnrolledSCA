@@ -1,4 +1,7 @@
 import torch
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -54,8 +57,19 @@ DD_ft_lr = 5e-4
 
 print('------------Starting training ALDCISTA------------')
 model_3 = ALDC_ISTA(torch.clone(A_), 'MCP', lambd_0, T = T, SS = True)
-layerwise_train(model_3, 'DC', 'AL-DC-ISTA', generator, 'MCP', lr = A_lr, ft_lr = A_ft_lr, verbose=True)
-torch.save(model_3.state_dict(), r"C:/Users/Leonardo/Documents/GitHub/ModelBasedDL4SCA/ckpts/model_3_NOISY_weights.pth")
+layerwise_train(
+    model = model_3, 
+    family = 'DC', 
+    model_class = 'AL-DC-ISTA', 
+    mode = 'Online',
+    generator = generator, 
+    DCSIP = 'MCP', 
+    lr_0 = A_lr, 
+    ft_lr_0 = A_ft_lr, 
+    verbose = True
+    )
+
+torch.save(model_3.state_dict(), r"/home/ubuntu/Documents/GITHUB/NonconvexSparseLearningUnrolledSCA/checkpoint/model_3_NOISY_weights_2006.pth")
 
 # print('------------Starting training LDCISTACPSS------------')
 # model_4 = L_DC_ISTA_CPSS(torch.clone(A_), 'MCP', lambd_0, T = T, SS = True)
